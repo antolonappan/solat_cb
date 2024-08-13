@@ -1,3 +1,4 @@
+# object oriented version of Patricia's code
 import numpy as np
 import healpy as hp
 import pymaster as nmt
