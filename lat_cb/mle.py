@@ -777,4 +777,16 @@ class MLE:
             ang_list.append(ang_now)
             cov_list.append(cov_now)
             std_list.append(std_now)
-            return ang_list
+            return ang_list,cov_list,std_list
+        
+    
+    def estimate_angle(self, idx):
+        ang_list, _,_ = self.calculate(idx)
+        angs = np.rad2deg(ang_list[-1])
+        result = {}
+        for i, b in enumerate(self.bands):
+            result[f"alpha_{b}"] = angs[i+4]
+        result['beta'] = angs[3]
+        return result
+
+
