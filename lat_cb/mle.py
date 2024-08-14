@@ -791,17 +791,3 @@ class MLE:
         result['beta'] = angs[3]
         return result
 
-if __name__ == '__main__':
-
-    libdir ='/mnt/home/alonappan/storage/SOLAT'
-    nside = 512
-    alpha = 0.35
-    dust = 1
-    synch = 1
-    beta = [0.1,0.1,0.8,0.8,.2,.2]
-    lmax = 1000
-    mle = MLE(libdir,nside,alpha,dust,synch,beta,lmax)
-
-    jobs = np.arange(100)
-    for i in jobs[mpi.rank::mpi.size]:
-        di = mle.estimate_angle(i)
