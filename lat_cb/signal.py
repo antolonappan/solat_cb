@@ -6,6 +6,7 @@ import camb
 import os
 import pickle as pl
 from tqdm import tqdm
+from lat_cb import mpi
 
 ini_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), "cb.ini")
 spectra = os.path.join(os.path.dirname(os.path.realpath(__file__)), "spectra.pkl")
@@ -33,7 +34,9 @@ class CMB:
         powers = {}
         powers['cls'] = results.get_cmb_power_spectra(params, CMB_unit='muK', raw_cl=True)
         powers['dls'] = results.get_cmb_power_spectra(params, CMB_unit='muK', raw_cl=False)
-        pl.dump(powers, open(spectra, 'wb'))
+        if mpi.rank == 0:
+            pl.dump(powers, open(spectra, 'wb'))
+        mpi.barrier()
         return powers
 
     def get_power(self, dl=True):
@@ -120,7 +123,9 @@ class Foreground:
             sky = pysm3.Sky(nside=self.nside, preset_strings=[f"d{int(self.dust_model)}"])
             maps = sky.get_emission(band * u.GHz)
             maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(band*u.GHz))
-            hp.write_map(fname,maps[1:],dtype=np.float32)
+            if mpi.rank == 0:
+                hp.write_map(fname,maps[1:],dtype=np.float32)
+            mpi.barrier()
             return maps[1:].value
     
     def syncQU(self,band):
@@ -131,7 +136,9 @@ class Foreground:
             sky = pysm3.Sky(nside=self.nside, preset_strings=[f"s{int(self.sync_model)}"])
             maps = sky.get_emission(band * u.GHz)
             maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(band*u.GHz))
-            hp.write_map(fname,maps[1:],dtype=np.float32)
+            if mpi.rank == 0:
+                hp.write_map(fname,maps[1:],dtype=np.float32)
+            mpi.barrier()
             return maps[1:].value
 
 class Noise:
@@ -260,7 +267,7 @@ class Mask:
         to_i = npix - int(npix*mask_percent_s/100)
         mask[from_i:to_i] = 1
         mask = self.change_coord(mask, ['C', 'G'])
-        if self.mask_save:
+        if self.mask_save and (mpi.rank == 0):
             hp.write_map(fname, mask,dtype=np.int32)
         return mask
 

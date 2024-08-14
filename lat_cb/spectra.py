@@ -5,6 +5,7 @@ import pymaster as nmt
 import os
 from tqdm import tqdm
 from lat_cb.signal import  Foreground, LATsky
+from lat_cb import mpi
 
 
 def compute_master(f_a, f_b, wsp):
@@ -37,12 +38,14 @@ class Spectra:
         self.dxd_dir = os.path.join(dir,'dust_x_dust')
         self.sxs_dir = os.path.join(dir,'sync_x_sync')
         self.sxd_dir = os.path.join(dir,'sync_x_dust')
-        os.makedirs(self.oxo_dir, exist_ok=True)
-        os.makedirs(self.dxo_dir, exist_ok=True)
-        os.makedirs(self.sxo_dir, exist_ok=True)
-        os.makedirs(self.dxd_dir, exist_ok=True)
-        os.makedirs(self.sxs_dir, exist_ok=True)
-        os.makedirs(self.sxd_dir, exist_ok=True)
+        if mpi.rank==0:
+            os.makedirs(self.oxo_dir, exist_ok=True)
+            os.makedirs(self.dxo_dir, exist_ok=True)
+            os.makedirs(self.sxo_dir, exist_ok=True)
+            os.makedirs(self.dxd_dir, exist_ok=True)
+            os.makedirs(self.sxs_dir, exist_ok=True)
+            os.makedirs(self.sxd_dir, exist_ok=True)
+        mpi.barrier()
 
     
 
