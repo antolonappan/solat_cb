@@ -7,6 +7,7 @@ import os
 import pickle as pl
 from tqdm import tqdm
 from lat_cb import mpi
+import matplotlib.pyplot as plt
 
 ini_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), "cb.ini")
 spectra = os.path.join(os.path.dirname(os.path.realpath(__file__)), "spectra.pkl")
@@ -14,6 +15,21 @@ mask = os.path.join(os.path.dirname(os.path.realpath(__file__)), "masks.fits")
 
 def inrad(alpha):
     return np.deg2rad(alpha) # type: ignore
+
+
+def cli(cl):
+    ret = np.zeros_like(cl)
+    ret[np.where(cl > 0)] = 1. / cl[np.where(cl > 0)]
+    return ret
+
+def synalm_c1(cl_x, alm_x, cl_y, cl_xy):
+    lmax = hp.Alm.getlmax(len(alm_x))
+    assert len(cl_x) >= lmax + 1, 'cl_x is less than the lmax of alm_x'
+    assert len(cl_y) >= lmax + 1, 'cl_y is less than the lmax of alm_x'
+    assert len(cl_xy) >= lmax + 1, 'cl_xy is less than the lmax of alm_x'
+    corr = cl_xy * cli(cl_x)
+    elm = hp.synalm(cl_y - corr*cl_xy, lmax=lmax)
+    return elm + hp.almxfl(alm_x ,corr)
 
 class CMB:
 
@@ -143,10 +159,114 @@ class Foreground:
 
 class Noise:
 
-    def __init__(self,nside):
+    def __init__(self,nside,atm_noise=False,atm_corr=False):
+        if atm_corr:
+            assert atm_noise,"atm_corr should be True if atm_noise is True"
         self.nside = nside
+        self.lmax = 3 * nside - 1
+        self.fsky = 0.4
+        self.sensitivity_mode = 2
+        self.atm_noise = atm_noise
+        self.atm_corr = atm_corr
+        self.Nell = self.__so_noise__() if self.atm_noise else None
+
     
-    def noiseQU(self,nlevp):
+    def __so_noise__(self):
+        _Nell = SO_LAT_Nell(self.sensitivity_mode,self.fsky,self.lmax+10)
+        lmax = _Nell['ell'][-1]
+        Nell = {}
+        for key in _Nell.keys():
+            if key == 'ell':
+                continue
+            Nell[key] = np.zeros(lmax+1)
+            Nell[key][_Nell['ell']] = _Nell[key]
+        del _Nell
+        return Nell
+
+    def noiseQU(self,nlevp=None,plot=False):
+        if (self.atm_noise) and (not self.atm_corr):
+            N = self.noiseQUatm()
+        elif self.atm_corr:
+            N = self.noiseQUatmCorr()
+        else:
+            N = self.noiseQUwhite(nlevp)
+        if not plot:
+            return N
+        else:
+            return self.plot_noiseQU(N)
+    
+    def plot_noiseQU(self,noisemaps):
+        N = self.Nell
+        def eb(i):
+            qu = noisemaps[i]
+            return hp.map2alm_spin(qu,spin=2)
+        
+        eb_27 = eb(0)
+        eb_39 = eb(1)
+        eb_93 = eb(2)
+        eb_145 = eb(3)
+        eb_225 = eb(4)
+        eb_280 = eb(5)
+
+        plt.figure(figsize=(12,4))
+        plt.subplot(131)
+        plt.loglog(hp.alm2cl(eb_27[0]))
+        plt.loglog(N['27'],label='27')
+        plt.loglog(hp.alm2cl(eb_39[0]))
+        plt.loglog(N['39'],label='39')
+        plt.loglog(hp.alm2cl(eb_27[0],eb_39[0]))
+        plt.loglog(N['27x39'],label='27x39')
+        plt.legend()
+        plt.subplot(132)
+        plt.loglog(hp.alm2cl(eb_93[0]))
+        plt.loglog(N['93'],label='93')
+        plt.loglog(hp.alm2cl(eb_145[0]))
+        plt.loglog(N['145'],label='145')
+        plt.loglog(hp.alm2cl(eb_93[0],eb_145[0]))
+        plt.loglog(N['93x145'],label='93x145')
+        plt.legend()
+        plt.subplot(133)
+        plt.loglog(hp.alm2cl(eb_225[0]))
+        plt.loglog(N['225'],label='225')
+        plt.loglog(hp.alm2cl(eb_280[0]))
+        plt.loglog(N['280'],label='280')
+        plt.loglog(hp.alm2cl(eb_225[0],eb_280[0]))
+        plt.loglog(N['225x280'],label='225x280')
+        plt.legend()
+
+    def noiseQUatm(self,):
+        Nqus = []
+        for key in self.Nell.keys():
+            if 'x' in key:
+                continue
+            Nell = self.Nell[key]
+            glm = hp.synalm(Nell,lmax=self.lmax)
+            clm = hp.synalm(Nell,lmax=self.lmax)
+            Nqus.append(hp.alm2map_spin([glm,clm],self.nside,2,lmax=self.lmax))
+        return np.array(Nqus)
+
+    def noiseQUatmCorr(self,):
+        keys = list(self.Nell.keys())
+        Nqus = []
+        k = 0
+        for i in range(3):
+            ngroup = []
+            for j in range(3):
+                ngroup.append(self.Nell[keys[k]])
+                k += 1
+            cl_xx,cl_yy,cl_xy = ngroup
+            glm1 = hp.synalm(cl_xx,lmax=self.lmax)
+            clm1 = hp.synalm(cl_xx,lmax=self.lmax)
+            glm2= synalm_c1(cl_xx,glm1,cl_yy,cl_xy)
+            clm2= synalm_c1(cl_xx,clm1,cl_yy,cl_xy)
+            qu1 = hp.alm2map_spin([glm1,clm1],self.nside,2,lmax=self.lmax)
+            qu2 = hp.alm2map_spin([glm2,clm2],self.nside,2,lmax=self.lmax)
+            Nqus.append(qu1)
+            Nqus.append(qu2)
+        return np.array(Nqus)
+
+    
+    def noiseQUwhite(self,nlevp):
         if type(nlevp) == np.int64 or type(nlevp) == np.float:
             nlevp = [nlevp]
             depth_p = np.array(nlevp)
@@ -174,6 +294,114 @@ class Noise:
         else:
             return noise[:,1:, :]
 
+
+def SO_LAT_Nell(sensitivity_mode,f_sky,ell_max,sqrt=True):
+    ## returns noise curves in both temperature and polarization, including the impact of the beam, for the SO large aperture telescope
+    # sensitivity_mode:
+    #     1: baseline, 
+    #     2: goal
+    # f_sky:  number from 0-1
+    # ell_max: the maximum value of ell used in the computation of N(ell)
+    ####################################################################
+    ###                        Internal variables
+    ## LARGE APERTURE
+    # configuration
+    # ensure valid parameter choices
+    assert( sensitivity_mode == 1 or sensitivity_mode == 2)
+    assert( f_sky > 0.0 and f_sky <= 1.0)
+    assert( ell_max <= 2e4 )
+    NTubes_LF  = 1 
+    NTubes_MF  = 4 
+    NTubes_UHF = 2 
+    # sensitivity in uK*sqrt(s)
+    # set noise to irrelevantly high value when NTubes=0
+    # note that default noise levels are for 1-4-2 tube configuration
+    S_LA_27  = np.array([1.0e9, 48.0, 35.0]) * np.sqrt(1./NTubes_LF)  ## converting these to per tube sensitivities
+    S_LA_39  = np.array([1.0e9, 24.0, 18.0]) * np.sqrt(1./NTubes_LF)
+    S_LA_93  = np.array([1.0e9,  5.4,  3.9]) * np.sqrt(4./NTubes_MF) 
+    S_LA_145 = np.array([1.0e9,  6.7,  4.2]) * np.sqrt(4./NTubes_MF) 
+    S_LA_225 = np.array([1.0e9, 15.0, 10.0]) * np.sqrt(2./NTubes_UHF) 
+    S_LA_280 = np.array([1.e9,  36.0, 25.0]) * np.sqrt(2./NTubes_UHF)
+    # 1/f polarization noise -- see Sec. 2.2 of SO science goals paper
+    f_knee_pol_LA_27  = 700.
+    f_knee_pol_LA_39  = 700.
+    f_knee_pol_LA_93  = 700.
+    f_knee_pol_LA_145 = 700.
+    f_knee_pol_LA_225 = 700.
+    f_knee_pol_LA_280 = 700.
+    alpha_pol         = -1.4
+    
+    ####################################################################
+    ## calculate the survey area and time
+    survey_time = 5. #years
+    t     = survey_time * 365.25 * 24. * 3600.    ## convert years to seconds
+    t     = t * 0.2   ## retention after observing efficiency and cuts
+    t     = t * 0.85  ## a kludge for the noise non-uniformity of the map edges
+    A_SR  = 4. * np.pi * f_sky  ## sky areas in steradians
+    A_deg =  A_SR * (180/np.pi)**2  ## sky area in square degrees
+    #print("sky area: ", A_deg, "degrees^2")
+    
+    ####################################################################
+    ## make the ell array for the output noise curves
+    ell = np.arange(2, ell_max, 1)
+    
+    ####################################################################
+    ###   CALCULATE N(ell) for Temperature
+    ## calculate the experimental weight
+    W_T_27  = S_LA_27[sensitivity_mode]  / np.sqrt(t)
+    W_T_39  = S_LA_39[sensitivity_mode]  / np.sqrt(t)
+    W_T_93  = S_LA_93[sensitivity_mode]  / np.sqrt(t)
+    W_T_145 = S_LA_145[sensitivity_mode] / np.sqrt(t)
+    W_T_225 = S_LA_225[sensitivity_mode] / np.sqrt(t)
+    W_T_280 = S_LA_280[sensitivity_mode] / np.sqrt(t)
+
+    ####################################################################
+    ###   CALCULATE N(ell) for Polarization
+    ## calculate the atmospheric contribution for P
+    AN_P_27  = (ell / f_knee_pol_LA_27 )**alpha_pol + 1.  
+    AN_P_39  = (ell / f_knee_pol_LA_39 )**alpha_pol + 1. 
+    AN_P_93  = (ell / f_knee_pol_LA_93 )**alpha_pol + 1.   
+    AN_P_145 = (ell / f_knee_pol_LA_145)**alpha_pol + 1.   
+    AN_P_225 = (ell / f_knee_pol_LA_225)**alpha_pol + 1.   
+    AN_P_280 = (ell / f_knee_pol_LA_280)**alpha_pol + 1.
+
+    ## calculate N(ell)
+    N_ell_P_27   = (W_T_27  * np.sqrt(2))**2. * A_SR * AN_P_27
+    N_ell_P_39   = (W_T_39  * np.sqrt(2))**2. * A_SR * AN_P_39
+    N_ell_P_93   = (W_T_93  * np.sqrt(2))**2. * A_SR * AN_P_93
+    N_ell_P_145  = (W_T_145 * np.sqrt(2))**2. * A_SR * AN_P_145
+    N_ell_P_225  = (W_T_225 * np.sqrt(2))**2. * A_SR * AN_P_225
+    N_ell_P_280  = (W_T_280 * np.sqrt(2))**2. * A_SR * AN_P_280
+    
+    # include cross-correlations due to atmospheric noise
+    # use correlation coefficient of r=0.9 within each dichroic pair and 0 otherwise
+    r_atm = 0.9
+    # different approach than for T -- need to subtract off the white noise part to get the purely atmospheric part
+    # see Sec. 2.2 of the SO science goals paper
+    N_ell_P_27_atm  = (W_T_27  * np.sqrt(2))**2. * A_SR * (ell / f_knee_pol_LA_27 )**alpha_pol
+    N_ell_P_39_atm  = (W_T_39  * np.sqrt(2))**2. * A_SR * (ell / f_knee_pol_LA_39 )**alpha_pol
+    N_ell_P_93_atm  = (W_T_93  * np.sqrt(2))**2. * A_SR * (ell / f_knee_pol_LA_93 )**alpha_pol
+    N_ell_P_145_atm = (W_T_145  * np.sqrt(2))**2. * A_SR * (ell / f_knee_pol_LA_145 )**alpha_pol
+    N_ell_P_225_atm = (W_T_225  * np.sqrt(2))**2. * A_SR * (ell / f_knee_pol_LA_225 )**alpha_pol
+    N_ell_P_280_atm = (W_T_280  * np.sqrt(2))**2. * A_SR * (ell / f_knee_pol_LA_280 )**alpha_pol
+    N_ell_P_27x39   = r_atm * np.sqrt(N_ell_P_27_atm * N_ell_P_39_atm)
+    N_ell_P_93x145  = r_atm * np.sqrt(N_ell_P_93_atm * N_ell_P_145_atm)
+    N_ell_P_225x280 = r_atm * np.sqrt(N_ell_P_225_atm * N_ell_P_280_atm)
+        
+    ## make a dictionary of noise curves for P
+    N_ell_P_LA = {'ell':ell,
+                  '27': np.sqrt(N_ell_P_27) if sqrt else N_ell_P_27,   
+                  '39':np.sqrt(N_ell_P_39) if sqrt else N_ell_P_39,    
+                  '27x39':np.sqrt(N_ell_P_27x39) if sqrt else N_ell_P_27x39,
+                  '93':np.sqrt(N_ell_P_93) if sqrt else N_ell_P_93,  
+                  '145':np.sqrt(N_ell_P_145) if sqrt else N_ell_P_145,  
+                  '93x145':np.sqrt(N_ell_P_93x145) if sqrt else N_ell_P_93x145,
+                  '225':np.sqrt(N_ell_P_225) if sqrt else N_ell_P_225, 
+                  '280':np.sqrt(N_ell_P_280) if sqrt else N_ell_P_280, 
+                  '225x280':np.sqrt(N_ell_P_225x280) if sqrt else N_ell_P_225x280
+                  }
+ 
+    return N_ell_P_LA
 
 class LATsky:
     freqs = np.array([27,39,93,145,225,280])
