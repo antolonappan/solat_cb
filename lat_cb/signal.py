@@ -245,24 +245,19 @@ class Noise:
             Nqus.append(hp.alm2map_spin([glm,clm],self.nside,2,lmax=self.lmax))
         return np.array(Nqus)
 
-    def noiseQUatmCorr(self,):
+
+    def noiseQUatmCorr(self):
         keys = list(self.Nell.keys())
         Nqus = []
-        k = 0
-        for i in range(3):
-            ngroup = []
-            for j in range(3):
-                ngroup.append(self.Nell[keys[k]])
-                k += 1
-            cl_xx,cl_yy,cl_xy = ngroup
-            glm1 = hp.synalm(cl_xx,lmax=self.lmax)
-            clm1 = hp.synalm(cl_xx,lmax=self.lmax)
-            glm2= synalm_c1(cl_xx,glm1,cl_yy,cl_xy)
-            clm2= synalm_c1(cl_xx,clm1,cl_yy,cl_xy)
-            qu1 = hp.alm2map_spin([glm1,clm1],self.nside,2,lmax=self.lmax)
-            qu2 = hp.alm2map_spin([glm2,clm2],self.nside,2,lmax=self.lmax)
-            Nqus.append(qu1)
-            Nqus.append(qu2)
+        for i in range(0, len(keys), 3): 
+            cl_xx, cl_yy, cl_xy = (self.Nell[keys[i]], self.Nell[keys[i+1]], self.Nell[keys[i+2]])
+            glm1 = hp.synalm(cl_xx, lmax=self.lmax)
+            clm1 = hp.synalm(cl_xx, lmax=self.lmax)
+            glm2 = synalm_c1(cl_xx, glm1, cl_yy, cl_xy)
+            clm2 = synalm_c1(cl_xx, clm1, cl_yy, cl_xy)
+            qu1 = hp.alm2map_spin([glm1, clm1], self.nside, 2, lmax=self.lmax)
+            qu2 = hp.alm2map_spin([glm2, clm2], self.nside, 2, lmax=self.lmax)
+            Nqus.extend([qu1, qu2])
         return np.array(Nqus)
 
     
