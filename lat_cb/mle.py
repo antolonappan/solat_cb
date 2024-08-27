@@ -71,19 +71,21 @@ def bin_cov_matrix(cov, info):
 
 class MLE:
 
-    def __init__(self,libdir,nside,alpha,dust,synch,beta,lmax,atm_noise,atm_corr):
-        self.spec = Spectra(libdir,nside,alpha,dust,synch,beta,lmax,atm_noise,atm_corr)
-        self.cmb = CMB(libdir,nside,alpha)
+    def __init__(self,libdir,spec_lib,binwidth=20,bmin=20,bmax=1000):
+        self.spec = spec_lib
+        self.cmb = CMB(libdir,self.spec.lat.nside,self.spec.lat.alpha)
         self.cmb_cls = self.cmb.get_lensed_spectra(dl=False,dtype='a').T
-        self.nside = nside
         self.fsky = np.mean(self.spec.mask)
         self.niter_max =100
+        self.nside = self.spec.lat.nside
 
 
 
-        self.nlb   = 20 # number of multipoles per bin
-        self.bmin  = 21 # multipole to start the binning
-        self.bmax  = 1000 # multipole to end the binninh
+        self.nlb   = binwidth
+        self.bmin  = bmin
+        self.bmax  = bmax
+
+        assert bmax <= self.spec.lmax, "bmax must be less than lmax in Spectra object"
 
         # define binning
         lower_edge = np.arange(self.bmin, self.bmax-self.nlb ,self.nlb)
