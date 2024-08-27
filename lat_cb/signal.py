@@ -169,6 +169,13 @@ class Noise:
         self.atm_noise = atm_noise
         self.atm_corr = atm_corr
         self.Nell = self.__so_noise__() if self.atm_noise else None
+        if self.atm_noise:
+            if self.atm_corr:
+                print("Noise Model: Atmospheric Noise with Correlation")
+            else:
+                print("Noise Model: Atmospheric Noise")
+        else:
+            print("Noise Model: White Noise")
 
     
     def __so_noise__(self):
@@ -185,9 +192,9 @@ class Noise:
 
     def noiseQU(self,nlevp=None,plot=False):
         if (self.atm_noise) and (not self.atm_corr):
-            N = self.noiseQUatm()
+            N = self.noiseQUatm(nlevp) #nlevp is bands
         elif self.atm_corr:
-            N = self.noiseQUatmCorr()
+            N = self.noiseQUatmCorr(nlevp)
         else:
             N = self.noiseQUwhite(nlevp)
         if not plot:
@@ -234,7 +241,24 @@ class Noise:
         plt.loglog(N['225x280'],label='225x280')
         plt.legend()
 
-    def noiseQUatm(self,):
+    
+    def noiseQUatm(self,band=None):
+        if band is None:
+            return self.noiseQUatm_bands()
+        else:
+            return self.noiseQUatm_band(band)
+
+    def noiseQUatm_band(self,band):
+        band = str(band)
+        if band not in self.Nell.keys():
+            raise ValueError(f"Band {band} not in the noise model")
+
+        Nell = self.Nell[band]
+        glm = hp.synalm(Nell,lmax=self.lmax)
+        clm = hp.synalm(Nell,lmax=self.lmax)
+        return hp.alm2map_spin([glm,clm],self.nside,2,lmax=self.lmax)
+
+    def noiseQUatm_bands(self):
         Nqus = []
         for key in self.Nell.keys():
             if 'x' in key:
@@ -246,7 +270,9 @@ class Noise:
         return np.array(Nqus)
 
 
-    def noiseQUatmCorr(self):
+    def noiseQUatmCorr(self,b=None):
+        if b is not None:
+            raise NotImplementedError("Bandwise atm noise with correlation is not implemented")
         keys = list(self.Nell.keys())
         Nqus = []
         for i in range(0, len(keys), 3): 
@@ -406,14 +432,19 @@ class LATsky:
     for i in range(len(freqs)):
         configs[freqs[i]] = {'fwhm':fwhm[i],'nlevp':nlevp[i]}
     
-    def __init__(self,libdir,nside,alpha,dust,synch,beta):
-        self.libdir = os.path.join(libdir, 'LAT')
+    def __init__(self,libdir,nside,alpha,dust,synch,beta,atm_noise=False,atm_corr=False):
+        fldname = ''
+        if atm_noise:
+            fldname += '_atm_noise'
+        if atm_corr:
+            fldname += '_corr'
+        self.libdir = os.path.join(libdir, 'LAT'+fldname)
         os.makedirs(self.libdir, exist_ok=True)
         self.config = self.configs
         self.nside = nside
         self.cmb = CMB(libdir,nside,alpha)
         self.foreground = Foreground(libdir,nside,dust,synch)
-        self.noise = Noise(nside)
+        self.noise = Noise(nside,atm_noise,atm_corr)
         if type(beta) == list:
             assert len(beta) == len(self.freqs)
             beta_dict = {}
@@ -425,6 +456,8 @@ class LATsky:
 
         self.beta = beta
         self.mask = Mask(nside,self.libdir).get_mask()
+        self.atm_noise = atm_noise
+        self.atm_corr = atm_corr
 
 
     def signalQU(self,idx,band):
@@ -450,6 +483,23 @@ class LATsky:
         alpha = self.cmb.alpha
         return os.path.join(self.libdir, f"obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}_{fwhm}_{idx:03d}.fits")
     
+
+    def __obsQU_spec__(self,idx):
+        bands = self.freqs
+        signal = []
+        for f in bands:
+            fwhm = self.config[f]['fwhm']
+            beta = self.config[f]['beta']
+            signal.append(self.__obsQU__(idx,f,fwhm,beta))
+        signal = np.array(signal)
+        noise = self.noise.noiseQU()
+        total = signal + noise
+        for i,f in enumerate(bands):
+            fname = self.obsQUfname(idx,f)
+            QU = total[i]
+            hp.write_map(fname,QU,dtype=np.float64)
+        
+
     def obsQU(self,idx,band):
         fwhm = self.config[band]['fwhm']
         beta = self.config[band]['beta']
@@ -457,8 +507,14 @@ class LATsky:
         if os.path.isfile(fname):
             return hp.read_map(fname,field=[0,1])
         else:
-            signal = self.__obsQU__(idx,band,fwhm,beta)
-            noise = self.noise.noiseQU(self.config[band]['nlevp'])
+            if self.atm_corr:
+                self.__obsQU_spec__(idx)
+                return hp.read_map(fname,field=[0,1])
+            signal = np.array(self.__obsQU__(idx,band,fwhm,beta))
+            if self.atm_noise:
+                noise = np.array(self.noise.noiseQU(band))
+            else:
+                noise = np.array(self.noise.noiseQU(self.config[band]['nlevp']))
             sky = signal + noise
             hp.write_map(fname,sky,dtype=np.float64)
             return sky

@@ -71,8 +71,8 @@ def bin_cov_matrix(cov, info):
 
 class MLE:
 
-    def __init__(self,libdir,nside,alpha,dust,synch,beta,lmax):
-        self.spec = Spectra(libdir,nside,alpha,dust,synch,beta,lmax)
+    def __init__(self,libdir,nside,alpha,dust,synch,beta,lmax,atm_noise,atm_corr):
+        self.spec = Spectra(libdir,nside,alpha,dust,synch,beta,lmax,atm_noise,atm_corr)
         self.cmb = CMB(libdir,nside,alpha)
         self.cmb_cls = self.cmb.get_lensed_spectra(dl=False,dtype='a').T
         self.nside = nside
@@ -762,6 +762,22 @@ class MLE:
             else:
                 #evaluate convergence of the iterative calculation 
                 #regulate tolerance depending on the sensitivity to angle measurement
+                # tol= 0.00001 if np.min(std_now)*rad2arcmin >0.5 else 0.1
+                # # use only the angles as convergence criterion, not amplitude
+                # # use alpha + beta sum as convergence criterion
+                # #difference with i-1
+                # if niter == 0:
+                #     c1vec = np.abs((ang_now[self.ExtParam-1]+ang_now[self.ExtParam:])-(ang_list[niter][self.ExtParam-1]+ang_list[niter][self.ExtParam:]))*rad2arcmin
+                #     c1 = c1vec>=tol
+                #     if np.sum(c1)<=1 or niter>self.niter_max:
+                #         converged = True
+                # else:
+                #     #difference with i-2 
+                #     c2vec = np.abs((ang_now[self.ExtParam-1]+ang_now[self.ExtParam:])-(ang_list[niter-1][self.ExtParam-1]+ang_list[niter-1][self.ExtParam:]))*rad2arcmin
+                #     c2 = c2vec>=tol
+                #     if np.sum(c2)<=1:
+                #         converged = True
+
                 tol= 0.5 if np.min(std_now)*rad2arcmin >0.5 else 0.1
                 # use only the angles as convergence criterion, not amplitude
                 # use alpha + beta sum as convergence criterion
@@ -779,7 +795,10 @@ class MLE:
             ang_list.append(ang_now)
             cov_list.append(cov_now)
             std_list.append(std_now)
-            return ang_list,cov_list,std_list
+            niter += 1
+
+
+        return ang_list,cov_list,std_list
         
     
     def estimate_angle(self, idx):

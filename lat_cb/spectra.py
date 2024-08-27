@@ -14,11 +14,16 @@ def compute_master(f_a, f_b, wsp):
     return cl_decoupled
 
 class Spectra:
-    def __init__(self,libdir,nside,alpha,dust,synch,beta,lmax):
-        libdir = os.path.join(libdir,f'spectra_{nside}_{lmax}')
-        self.__set_dir__(libdir)
-        self.lat = LATsky(libdir,nside,alpha,dust,synch,beta)
+    def __init__(self,libdir,nside,alpha,dust,synch,beta,lmax,atm_noise=False,atm_corr=False):
+        self.lat = LATsky(libdir,nside,alpha,dust,synch,beta,atm_noise,atm_corr)
         self.fg = Foreground(libdir,nside,dust,synch)
+        fldname = ''
+        if atm_noise:
+            fldname += '_atm'
+        if atm_corr:
+            fldname += '_corr'
+        libdir = os.path.join(libdir,f'spectra_{nside}_{lmax}'+fldname)
+        self.__set_dir__(libdir)
         self.nside = nside
         self.lmax = lmax 
         self.binInfo = nmt.NmtBin.from_lmax_linear(lmax, 1)
