@@ -29,6 +29,10 @@ class Spectra:
         self.binInfo = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
         self.Nell = self.binInfo.get_n_bands()
         self.mask = self.lat.mask
+        if not self.lat.nhits:
+            self.fsky = np.average(self.mask)
+        else:
+            raise NotImplementedError("nhits not implemented")
         self.bands = LATsky.freqs
         self.Nbands = len(self.bands)
 
@@ -38,6 +42,29 @@ class Spectra:
 
         self.bandpass = self.lat.bandpass
 
+        self.workspace = nmt.NmtWorkspace()
+        self.get_coupling_matrix()
+
+    
+    def get_coupling_matrix(self):
+        fsky = np.round(self.fsky,2)
+        fname = os.path.join(self.wdir, f"coupling_matrix_Nside{self.nside}_fsky_{str(fsky).replace('.','p')}.fits")
+        if not os.path.isfile(fname):
+            print("Computing coupling Matrix")
+            mask_f = nmt.NmtField(self.mask,[self.mask,self.mask],lmax=self.lmax, purify_b=False)
+            self.workspace.compute_coupling_matrix(mask_f, mask_f, self.binInfo)
+            del mask_f
+            self.workspace.write_to(fname)
+            print(f"Coupling Matrix saved to {fname}")
+        else:
+            print(f"Reading coupling matrix from {fname}")
+            self.workspace.read_from(fname)
+    
+    def compute_master(self,f_a, f_b):
+        cl_coupled   = nmt.compute_coupled_cell(f_a, f_b)
+        cl_decoupled = self.workspace.decouple_cell(cl_coupled)
+        return cl_decoupled
+
     def __set_dir__(self,dir):
         self.oxo_dir = os.path.join(dir,'obs_x_obs')
         self.dxo_dir = os.path.join(dir,'dust_x_obs')
@@ -45,6 +72,7 @@ class Spectra:
         self.dxd_dir = os.path.join(dir,'dust_x_dust')
         self.sxs_dir = os.path.join(dir,'sync_x_sync')
         self.sxd_dir = os.path.join(dir,'sync_x_dust')
+        self.wdir = os.path.join(dir,'workspaces')
         if mpi.rank==0:
             os.makedirs(self.oxo_dir, exist_ok=True)
             os.makedirs(self.dxo_dir, exist_ok=True)
@@ -52,6 +80,7 @@ class Spectra:
             os.makedirs(self.dxd_dir, exist_ok=True)
             os.makedirs(self.sxs_dir, exist_ok=True)
             os.makedirs(self.sxd_dir, exist_ok=True)
+            os.makedirs(self.wdir, exist_ok=True)
         mpi.barrier()
 
     
@@ -118,9 +147,7 @@ class Spectra:
             for jj in range(ii, self.Nbands, 1):
                 fp_j  = nmt.NmtField(self.mask, self.obs_qu_maps[jj, :, :], lmax=self.lmax, purify_b=False)
 
-                wp_ij = nmt.NmtWorkspace()
-                wp_ij.compute_coupling_matrix(fp_i, fp_j, self.binInfo)
-                cl_ij = compute_master(fp_i, fp_j, wp_ij)# (EiEj, EiBj, BiEj, BiBj)
+                cl_ij = self.compute_master(fp_i, fp_j)# (EiEj, EiBj, BiEj, BiBj)
                 
                 cl[ii, jj, 0, 2:] = cl_ij[0, :] # EiEj
                 cl[ii, jj, 1, 2:] = cl_ij[3, :] # BiBj
@@ -131,7 +158,7 @@ class Spectra:
                     cl[jj, ii, 1, 2:] = cl_ij[3, :] # BjBi = BiBj 
                     cl[jj, ii, 2, 2:] = cl_ij[2, :] # EjBi 
 
-                del fp_j, wp_ij
+                del fp_j
             np.save(fname, cl)
             return cl
         
@@ -151,16 +178,15 @@ class Spectra:
             for jj in range(0, self.Nbands, 1):
                 fp_j  = nmt.NmtField(self.mask, self.obs_qu_maps[jj], lmax=self.lmax, purify_b=False)
 
-                wp_ij = nmt.NmtWorkspace()
-                wp_ij.compute_coupling_matrix(fp_i, fp_j, self.binInfo)
-                cl_ij = compute_master(fp_i, fp_j, wp_ij)# (EiEj, EiBj, BiEj, BiBj)
+                
+                cl_ij = self.compute_master(fp_i, fp_j,)# (EiEj, EiBj, BiEj, BiBj)
                 
                 cl[ii, jj, 0, 2:] = cl_ij[0, :] # EiEj
                 cl[ii, jj, 1, 2:] = cl_ij[3, :] # BiBj
                 cl[ii, jj, 2, 2:] = cl_ij[1, :] # EiBj
                 cl[ii, jj, 3, 2:] = cl_ij[2, :] # BiEj
 
-                del fp_j, wp_ij
+                del fp_j
             np.save(fname, cl)
             return cl
     
@@ -181,10 +207,7 @@ class Spectra:
             # calculate the full triangle
             for jj in range(0, self.Nbands, 1):
                 fp_j  = nmt.NmtField(self.mask, self.obs_qu_maps[jj, :, :], lmax=self.lmax, purify_b=False)
-
-                wp_ij = nmt.NmtWorkspace()
-                wp_ij.compute_coupling_matrix(fp_i, fp_j, self.binInfo)
-                cl_ij = compute_master(fp_i, fp_j, wp_ij)# (EiEj, EiBj, BiEj, BiBj)
+                cl_ij = self.compute_master(fp_i, fp_j)# (EiEj, EiBj, BiEj, BiBj)
                 
                 cl[ii, jj, 0, 2:] = cl_ij[0, :] # EiEj
                 cl[ii, jj, 1, 2:] = cl_ij[3, :] # BiBj
@@ -213,9 +236,8 @@ class Spectra:
             for jj in range(ii, self.Nbands, 1):
                 fp_j  = nmt.NmtField(self.mask, self.sync_qu_maps[jj, :, :], lmax=self.lmax, purify_b=False)
 
-                wp_ij = nmt.NmtWorkspace()
-                wp_ij.compute_coupling_matrix(fp_i, fp_j, self.binInfo)
-                cl_ij = compute_master(fp_i, fp_j, wp_ij)
+                
+                cl_ij = self.compute_master(fp_i, fp_j)
                 
                 cl[ii, jj, 0, 2:] = cl_ij[0, :] # EiEj
                 cl[ii, jj, 1, 2:] = cl_ij[3, :] # BiBj
@@ -247,9 +269,8 @@ class Spectra:
             for jj in range(ii,self.Nbands, 1):
                 fp_j  = nmt.NmtField(self.mask, self.dust_qu_maps[jj, :, :], lmax=self.lmax, purify_b=False)
 
-                wp_ij = nmt.NmtWorkspace()
-                wp_ij.compute_coupling_matrix(fp_i, fp_j, self.binInfo)
-                cl_ij = compute_master(fp_i, fp_j, wp_ij)# (EiEj, EiBj, BiEj, BiBj)
+                
+                cl_ij = self.compute_master(fp_i, fp_j,)# (EiEj, EiBj, BiEj, BiBj)
                 
                 cl[ii, jj, 0, 2:] = cl_ij[0, :] # EiEj
                 cl[ii, jj, 1, 2:] = cl_ij[3, :] # BiBj
@@ -281,9 +302,8 @@ class Spectra:
             for jj in range(0, self.Nbands, 1):
                 fp_j  = nmt.NmtField(self.mask, self.dust_qu_maps[jj, :, :], lmax=self.lmax, purify_b=False)
 
-                wp_ij = nmt.NmtWorkspace()
-                wp_ij.compute_coupling_matrix(fp_i, fp_j, self.binInfo)
-                cl_ij = compute_master(fp_i, fp_j, wp_ij)# (EiEj, EiBj, BiEj, BiBj)
+                
+                cl_ij = self.compute_master(fp_i, fp_j,)# (EiEj, EiBj, BiEj, BiBj)
                 
                 cl[ii, jj, 0, 2:] = cl_ij[0, :] # EiEj
                 cl[ii, jj, 1, 2:] = cl_ij[3, :] # BiBj
