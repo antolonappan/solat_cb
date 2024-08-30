@@ -17,7 +17,7 @@ class Spectra:
     def __init__(self,libdir,lat_lib):
         self.lat = lat_lib
         self.nside = self.lat.nside
-        self.fg = Foreground(libidr,nside,self.lat.dust,self.lat.sync,False)
+        self.fg = Foreground(libdir,self.nside,self.lat.dust,self.lat.synch,False)
         fldname = ''
         if self.lat.atm_noise:
             fldname += '_atm'
@@ -109,7 +109,7 @@ class Spectra:
         self.sync_qu_maps = maps
     
     def __obs_x_obs_helper__(self, ii, idx):
-        fname = os.path.join(self.oxo_dir, f'obs_x_obs_{self.bands[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy')
+        fname = os.path.join(self.oxo_dir, f"obs_x_obs_{self.bands[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy")
         if os.path.isfile(fname):
             return np.load(fname)
         else:
@@ -142,7 +142,7 @@ class Spectra:
         return cl
     
     def __dust_x_obs_helper__(self, ii, idx):
-        fname = os.path.join(self.dxo_dir, f'dust_x_obs_{self.bands[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy')
+        fname = os.path.join(self.dxo_dir, f"dust_x_obs_{self.bands[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy")
         if os.path.isfile(fname):
             return np.load(fname)
         else:
@@ -171,7 +171,7 @@ class Spectra:
         return cl
     
     def __sync_x_obs_helper__(self, ii, idx):
-        fname = os.path.join(self.sxo_dir, f'sync_x_obs_{self.bands[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy')
+        fname = os.path.join(self.sxo_dir, f"sync_x_obs_{self.bands[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy")
         if os.path.isfile(fname):
             return np.load(fname)
         else:

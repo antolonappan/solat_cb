@@ -256,9 +256,9 @@ class BandpassInt:
         for i,b in enumerate(bands):
             nu, bp = self.get_profile(b)
             plt.plot(nu,bp,label=b)
+        plt.xlabel('Frequency (GHz)')
         plt.legend()
         plt.tight_layout()
-
 
 class Foreground:
 
@@ -508,6 +508,8 @@ class LATsky:
         if self.nhits:
             raise NotImplementedError("nhits is not implemented yet")
         self.bandpass = bandpass
+        if self.bandpass:
+            print("Bandpass is enabled")
 
 
     def signalQU(self,idx,band):
