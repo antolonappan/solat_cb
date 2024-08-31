@@ -94,12 +94,18 @@ class MLE:
         self.bin_conf   = bin_configuration(bin_def)
         self.Nbins      = bin_def[0]
 
-        self.inst = {27 : {'telescope': 'LFT', 'nu':  '27', 'fwhm': 7.4, 'idx': 0}, 
-                     39 : {'telescope': 'LFT', 'nu':  '39', 'fwhm': 5.1, 'idx': 1}, 
-                     93 : {'telescope': 'LFT', 'nu':  '93', 'fwhm': 2.2, 'idx': 2}, 
-                     145: {'telescope': 'LFT', 'nu': '145', 'fwhm': 1.4, 'idx': 3}, 
-                     225: {'telescope': 'LFT', 'nu': '225', 'fwhm': 1.0, 'idx': 4}, 
-                     280: {'telescope': 'LFT', 'nu': '280', 'fwhm': 0.9, 'idx': 5}}
+        self.inst = {'27a' : {'telescope': 'LFT', 'nu':  '27', 'fwhm': 7.4, 'idx': 0}, 
+                     '39a' : {'telescope': 'LFT', 'nu':  '39', 'fwhm': 5.1, 'idx': 1}, 
+                     '93a' : {'telescope': 'LFT', 'nu':  '93', 'fwhm': 2.2, 'idx': 2}, 
+                     '145a': {'telescope': 'LFT', 'nu': '145', 'fwhm': 1.4, 'idx': 3}, 
+                     '225a': {'telescope': 'LFT', 'nu': '225', 'fwhm': 1.0, 'idx': 4}, 
+                     '280a': {'telescope': 'LFT', 'nu': '280', 'fwhm': 0.9, 'idx': 5},
+                     '27b' : {'telescope': 'LFT', 'nu':  '27', 'fwhm': 7.4, 'idx': 6}, 
+                     '39b' : {'telescope': 'LFT', 'nu':  '39', 'fwhm': 5.1, 'idx': 7}, 
+                     '93b': {'telescope': 'LFT', 'nu':  '93', 'fwhm': 2.2, 'idx': 8}, 
+                     '145b': {'telescope': 'LFT', 'nu': '145', 'fwhm': 1.4, 'idx': 9}, 
+                     '225b': {'telescope': 'LFT', 'nu': '225', 'fwhm': 1.0, 'idx': 10}, 
+                     '280b': {'telescope': 'LFT', 'nu': '280', 'fwhm': 0.9, 'idx': 11}}
 
         self.Nbands = self.spec.Nbands
         self.bands = self.spec.bands

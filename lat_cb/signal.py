@@ -272,6 +272,8 @@ class Foreground:
         self.bp_profile = BandpassInt() if bandpass else None
 
     def dustQU(self,band):
+        if type(band) == str or type(band) == np.str_:
+            band = int(band[:-1])
         name = f'dustQU_N{self.nside}_f{band}.fits' if not self.bandpass else f'dustQU_N{self.nside}_f{band}_bp.fits'
         fname = os.path.join(self.libdir, name)
         if os.path.isfile(fname):
@@ -291,6 +293,8 @@ class Foreground:
             return maps[1:].value
     
     def syncQU(self,band):
+        if type(band) == str or type(band) == np.str_:
+            band = int(band[:-1])
         name = f'syncQU_N{self.nside}_f{band}.fits' if not self.bandpass else f'syncQU_N{self.nside}_f{band}_bp.fits'
         fname = os.path.join(self.libdir, name)
         if os.path.isfile(fname):
@@ -463,14 +467,14 @@ class Noise:
         noise[:, 1, :] *= sigma_pix_P[:, None]
         noise[:, 2, :] *= sigma_pix_P[:, None]
         if only_one:
-            return noise[0][1:]
+            return noise[0][1:] * np.sqrt(2)
         else:
-            return noise[:,1:, :]
+            return noise[:,1:, :] * np.sqrt(2)
 
 class LATsky:
-    freqs = np.array([27,39,93,145,225,280])
-    fwhm = np.array([7.4,5.1,2.2,1.4,1.0,0.9])
-    nlevp = np.array([71,36,8,10,22,54])
+    freqs = np.array(['27a','39a','93a','145a','225a','280a','27b','39b','93b','145b','225b','280b'])
+    fwhm = np.array([7.4,5.1,2.2,1.4,1.0,0.9,7.4,5.1,2.2,1.4,1.0,0.9])
+    nlevp = np.array([71,36,8,10,22,54,71,36,8,10,22,54])
     configs = {}
     for i in range(len(freqs)):
         configs[freqs[i]] = {'fwhm':fwhm[i],'nlevp':nlevp[i]}
@@ -513,6 +517,8 @@ class LATsky:
 
 
     def signalQU(self,idx,band):
+        if type(band) == str or type(band) == np.str_:
+            band = int(band[:-1])
         cmbQU = np.array(self.cmb.get_cb_lensed_QU(idx))
         dustQU = self.foreground.dustQU(band)
         syncQU = self.foreground.syncQU(band)
