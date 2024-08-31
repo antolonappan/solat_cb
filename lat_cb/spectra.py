@@ -7,12 +7,6 @@ from tqdm import tqdm
 from lat_cb.signal import  Foreground, LATsky
 from lat_cb import mpi
 
-
-def compute_master(f_a, f_b, wsp):
-    cl_coupled   = nmt.compute_coupled_cell(f_a, f_b)
-    cl_decoupled = wsp.decouple_cell(cl_coupled)
-    return cl_decoupled
-
 class Spectra:
     def __init__(self,libdir,lat_lib):
         self.lat = lat_lib
@@ -23,7 +17,7 @@ class Spectra:
             fldname += '_atm'
         if self.lat.atm_corr:
             fldname += '_corr'
-        self.lmax = 1500#3*nside-1
+        self.lmax = 1000#3*nside-1
         libdiri = os.path.join(libdir,f'spectra_{self.nside}'+fldname)
         comdir = os.path.join(libdir,f'spectra_{self.nside}'+'_common')
         self.__set_dir__(libdiri,comdir)
