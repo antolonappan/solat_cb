@@ -24,8 +24,9 @@ class Spectra:
         if self.lat.atm_corr:
             fldname += '_corr'
         self.lmax = 1500#3*nside-1
-        libdir = os.path.join(libdir,f'spectra_{self.nside}'+fldname)
-        self.__set_dir__(libdir)
+        libdiri = os.path.join(libdir,f'spectra_{self.nside}'+fldname)
+        comdir = os.path.join(libdir,f'spectra_{self.nside}'+'_common')
+        self.__set_dir__(libdiri,comdir)
         self.binInfo = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
         self.Nell = self.binInfo.get_n_bands()
         self.mask = self.lat.mask
@@ -65,14 +66,14 @@ class Spectra:
         cl_decoupled = self.workspace.decouple_cell(cl_coupled)
         return cl_decoupled
 
-    def __set_dir__(self,dir):
+    def __set_dir__(self,dir,cdir):
         self.oxo_dir = os.path.join(dir,'obs_x_obs')
         self.dxo_dir = os.path.join(dir,'dust_x_obs')
         self.sxo_dir = os.path.join(dir,'sync_x_obs')
-        self.dxd_dir = os.path.join(dir,'dust_x_dust')
-        self.sxs_dir = os.path.join(dir,'sync_x_sync')
-        self.sxd_dir = os.path.join(dir,'sync_x_dust')
-        self.wdir = os.path.join(dir,'workspaces')
+        self.dxd_dir = os.path.join(cdir,'dust_x_dust')
+        self.sxs_dir = os.path.join(cdir,'sync_x_sync')
+        self.sxd_dir = os.path.join(cdir,'sync_x_dust')
+        self.wdir = os.path.join(cdir,'workspaces')
         if mpi.rank==0:
             os.makedirs(self.oxo_dir, exist_ok=True)
             os.makedirs(self.dxo_dir, exist_ok=True)
