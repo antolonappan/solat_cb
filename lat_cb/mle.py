@@ -113,8 +113,15 @@ class MLE:
         self.dt = np.float64
         self.ExtParam = 4 # As, Ad, Asd, beta + N alpha_i
         self.Nvar  = self.Nbands + self.ExtParam
+        
 
-        avoid = 1
+        if self.corr:
+            avoid = 1
+        else:
+            avoid = 4
+        
+        self.avoid = avoid
+
         self.MNi  = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid)), dtype=np.uint8)
         self.MNj  = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid)), dtype=np.uint8)
         self.MNh  = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid)), dtype=np.uint8)
@@ -125,13 +132,20 @@ class MLE:
         std_h = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid), self.bmax+1), dtype=self.dt)
         std_k = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid), self.bmax+1), dtype=self.dt)
 
-        
-        IJidx = [] 
-        for ii in range(0, self.Nbands, 1):
-            for jj in range(0, self.Nbands, 1):
-                if jj!=ii: 
-                    IJidx.append((ii,jj))
-        self.IJidx = np.array(IJidx, dtype=np.uint8)
+        if self.corr:
+            IJidx = [] 
+            for ii in range(0, self.Nbands, 1):
+                for jj in range(0, self.Nbands, 1):
+                    if jj!=ii: 
+                        IJidx.append((ii,jj))
+            self.IJidx = np.array(IJidx, dtype=np.uint8)
+        else:
+            IJidx = [] 
+            for ii in range(0, self.Nbands, 1):
+                for jj in range(0, self.Nbands, 1):
+                    if not self.same_tube(ii,jj):
+                        IJidx.append((ii,jj))
+            self.IJidx = np.array(IJidx, dtype=np.uint8)
         MNidx = [] 
         for mm in range(0, self.Nbands*(self.Nbands-avoid), 1):
             for nn in range(0, self.Nbands*(self.Nbands-avoid), 1):
@@ -152,6 +166,20 @@ class MLE:
         self.std_j = np.deg2rad(std_j/60)/(2*np.sqrt(2*np.log(2)))
         self.std_h = np.deg2rad(std_h/60)/(2*np.sqrt(2*np.log(2)))
         self.std_k = np.deg2rad(std_k/60)/(2*np.sqrt(2*np.log(2)))
+    
+    def same_tube(self, ii, jj):
+        tube_low = {0,  1,  6,  7}
+        tube_med = {2,  3,  8,  9}
+        tube_hig = {4,  5, 10, 11}
+
+        if ii in tube_low and jj in tube_low:
+            return True
+        elif ii in tube_med and jj in tube_med:
+            return True
+        elif ii in tube_hig and jj in tube_hig:
+            return True
+        else:
+            return False
 
     
     def get_index(self,mn_pair):
@@ -258,7 +286,7 @@ class MLE:
         (_, pwf) = hp.pixwin(self.nside, pol=True, lmax=lmax)
         #####################
         # cmb 
-        Tcmb = np.zeros((2, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Tcmb = np.zeros((2, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         #prepare beams       
         beam = np.exp(-ell*(ell+1)*si**2/2)*np.exp(-ell*(ell+1)*sj**2/2)*np.exp(-ell*(ell+1)*sh**2/2)*np.exp(-ell*(ell+1)*sk**2/2)*pwf**4
         del si, sj, sh, sk
@@ -268,7 +296,7 @@ class MLE:
         del cmb # free memory
         ############################ remove all except T0(1), T5(6), T6(7)
         # observed * observed
-        To = np.zeros((3, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        To = np.zeros((3, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         #(1) observed
         To[0,:,:,:] = (EiEjo[self.MNi,self.MNh,:]*BiBjo[self.MNj,self.MNk,:] + EiBjo[self.MNi,self.MNk,:]*BiEjo[self.MNj,self.MNh,:])/(2*ell+1)
         #(6) observed
@@ -279,7 +307,7 @@ class MLE:
         del EiEjo, BiBjo, EiBjo, BiEjo # free memory
         ##################### remove EB from T1, T2, T3
         # synch * synch 
-        Ts = np.zeros((4, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Ts = np.zeros((4, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         #(1s)
         Ts[0,:,:,:] = (EiEjs[self.MNi,self.MNh,:]*BiBjs[self.MNj,self.MNk,:] + EiBjs[self.MNi,self.MNk,:]*BiEjs[self.MNj,self.MNh,:])/(2*ell+1)
         #(2s)
@@ -291,7 +319,7 @@ class MLE:
         Ts = np.moveaxis(bin_cov_matrix(Ts, binInfo), 3, 1)
         ##################### remove EB from T1, T2, T3
         # dust * dust
-        Td = np.zeros((4, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Td = np.zeros((4, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1d)
         Td[0,:,:,:] = (EiEjd[self.MNi,self.MNh,:]*BiBjd[self.MNj,self.MNk,:] + EiBjd[self.MNi,self.MNk,:]*BiEjd[self.MNj,self.MNh,:])/(2*ell+1)
         # (2d)
@@ -303,7 +331,7 @@ class MLE:
         Td = np.moveaxis(bin_cov_matrix(Td, binInfo), 3, 1)
         ##################### remove EB from T1, T2, T3
         # synch-dust * synch-dust 
-        TSD = np.zeros((4, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        TSD = np.zeros((4, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1SD)
         TSD[0,:,:,:] = (EiEjs[self.MNi,self.MNh,:]*BiBjd[self.MNj,self.MNk,:] + Eis_Bjd[self.MNi,self.MNk,:]*Eis_Bjd[self.MNh,self.MNj,:])/(2*ell+1)
         # (2SD)
@@ -315,7 +343,7 @@ class MLE:
         TSD = np.moveaxis(bin_cov_matrix(TSD, binInfo), 3, 1)
         ##################### remove EB from T1, T2, T3
         # dust-synch * dust-synch 
-        TDS = np.zeros((4, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        TDS = np.zeros((4, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1DS)
         TDS[0,:,:,:] = (EiEjd[self.MNi,self.MNh,:]*BiBjs[self.MNj,self.MNk,:] + Bis_Ejd[self.MNk,self.MNi,:]*Bis_Ejd[self.MNj,self.MNh,:])/(2*ell+1)
         # (2DS)
@@ -335,7 +363,7 @@ class MLE:
         ell=np.arange(0, lmax+1, 1)
         ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
         # synch * observed 
-        Ts_o = np.zeros((4,self.Nbands*(self.Nbands-1),self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Ts_o = np.zeros((4,self.Nbands*(self.Nbands-self.avoid),self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1so)
         Ts_o[0,:,:,:] = (Eis_Ejo[self.MNi,self.MNh,:]*Bis_Bjo[self.MNj,self.MNk,:] + Eis_Bjo[self.MNi,self.MNk,:]*Bis_Ejo[self.MNj,self.MNh,:])/(2*ell+1)
         # (1so*)
@@ -347,7 +375,7 @@ class MLE:
         Ts_o = np.moveaxis(bin_cov_matrix(Ts_o, binInfo), 3, 1)
         ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
         # dust * observed 
-        Td_o = np.zeros((4,self.Nbands*(self.Nbands-1),self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Td_o = np.zeros((4,self.Nbands*(self.Nbands-self.avoid),self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1do)
         Td_o[0,:,:,:] = (Eid_Ejo[self.MNi,self.MNh,:]*Bid_Bjo[self.MNj,self.MNk,:] + Eid_Bjo[self.MNi,self.MNk,:]*Bid_Ejo[self.MNj,self.MNh,:])/(2*ell+1)
         # (1do*)
@@ -359,7 +387,7 @@ class MLE:
         Td_o = np.moveaxis(bin_cov_matrix(Td_o, binInfo), 3, 1)
         ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
         # synch-dust * observed 
-        TSD_o = np.zeros((4,self.Nbands*(self.Nbands-1),self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        TSD_o = np.zeros((4,self.Nbands*(self.Nbands-self.avoid),self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1SDo)
         TSD_o[0,:,:,:] = (Eis_Ejo[self.MNi,self.MNh,:]*Bid_Bjo[self.MNj,self.MNk,:] + Eis_Bjo[self.MNi,self.MNk,:]*Bid_Ejo[self.MNj,self.MNh,:])/(2*ell+1)
         # (1SDo*)
@@ -371,7 +399,7 @@ class MLE:
         TSD_o = np.moveaxis(bin_cov_matrix(TSD_o, binInfo), 3, 1)
         ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
         # dust-synch * observed  
-        TDS_o = np.zeros((4, self.Nbands*(self.Nbands-1),self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        TDS_o = np.zeros((4, self.Nbands*(self.Nbands-self.avoid),self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1DSo)
         TDS_o[0,:,:,:] = (Eid_Ejo[self.MNi,self.MNh,:]*Bis_Bjo[self.MNj,self.MNk,:] + Eid_Bjo[self.MNi,self.MNk,:]*Bis_Ejo[self.MNj,self.MNh,:])/(2*ell+1)
         # (1DSo*)
@@ -393,7 +421,7 @@ class MLE:
         ell=np.arange(0, lmax+1,1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
         # synch * dust 
-        Ts_d=np.zeros((8, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Ts_d=np.zeros((8, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1sd)
         Ts_d[0,:,:,:] = (Eis_Ejd[self.MNi,self.MNh,:]*Bis_Bjd[self.MNj,self.MNk,:] + Eis_Bjd[self.MNi,self.MNk,:]*Bis_Ejd[self.MNj,self.MNh,:])/(2*ell+1)
         # (1sd*)
@@ -413,7 +441,7 @@ class MLE:
         Ts_d = np.moveaxis(bin_cov_matrix(Ts_d, binInfo), 3, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
         # synch-dust * dust-synch
-        TSD_DS = np.zeros((8, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        TSD_DS = np.zeros((8, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1SDDS)
         TSD_DS[0,:,:,:] = (Eis_Ejd[self.MNi,self.MNh,:]*Bis_Bjd[self.MNk,self.MNj,:] + EiBjs[self.MNi,self.MNk,:]*BiEjd[self.MNj,self.MNh,:])/(2*ell+1)
         # (1SDDS*)
@@ -433,7 +461,7 @@ class MLE:
         TSD_DS = np.moveaxis(bin_cov_matrix(TSD_DS, binInfo), 3, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
         # synch * synch-dust 
-        Ts_SD = np.zeros((8, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Ts_SD = np.zeros((8, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1sSD)
         Ts_SD[0,:,:,:] = (EiEjs[self.MNi,self.MNh,:]*Bis_Bjd[self.MNj,self.MNk,:] + Eis_Bjd[self.MNi,self.MNk,:]*BiEjs[self.MNj,self.MNh,:])/(2*ell+1)
         # (1sSD*)
@@ -453,7 +481,7 @@ class MLE:
         Ts_SD = np.moveaxis(bin_cov_matrix(Ts_SD, binInfo), 3, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
         # synch * dust-synch 
-        Ts_DS=np.zeros((8, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Ts_DS=np.zeros((8, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1sDS)
         Ts_DS[0,:,:,:] = (Eis_Ejd[self.MNi,self.MNh,:]*BiBjs[self.MNj,self.MNk,:] + EiBjs[self.MNi,self.MNk,:]*Bis_Ejd[self.MNj,self.MNh,:])/(2*ell+1)
         # (1sDS*)
@@ -473,7 +501,7 @@ class MLE:
         Ts_DS = np.moveaxis(bin_cov_matrix(Ts_DS, binInfo), 3, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
         # dust * synch-dust 
-        Td_SD=np.zeros((8, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Td_SD=np.zeros((8, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1dSD)
         Td_SD[0,:,:,:] = (Eis_Ejd[self.MNh,self.MNi,:]*BiBjd[self.MNj,self.MNk,:] + EiBjd[self.MNi,self.MNk,:]*Eis_Bjd[self.MNh,self.MNj,:])/(2*ell+1)
         # (1dSD*)
@@ -493,7 +521,7 @@ class MLE:
         Td_SD = np.moveaxis(bin_cov_matrix(Td_SD, binInfo), 3, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
         # dust * dust-synch 
-        Td_DS=np.zeros((8, self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), lmax+1), dtype=self.dt)
+        Td_DS=np.zeros((8, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=self.dt)
         # (1dDS)
         Td_DS[0,:,:,:] = (EiEjd[self.MNi,self.MNh,:]*Bis_Bjd[self.MNk,self.MNj,:] + Bis_Ejd[self.MNk,self.MNi,:]*BiEjd[self.MNj,self.MNh,:])/(2*ell+1)
         # (1dDS*)
