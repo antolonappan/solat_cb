@@ -310,7 +310,7 @@ def rnd_alm(lmax):
     mock_cl = np.repeat(1.0e3, lmax+1)
     return hp.almxfl(hp.synalm(mock_cl, lmax=lmax, new=True), 1/np.sqrt(mock_cl))
 
-def cholesky_matrix_elements_wcorr(N_ell, lmax):
+def cholesky_matrix_elements(N_ell, lmax):
     L11     = np.zeros(lmax, dtype=float)
     L11[2:] = np.sqrt(N_ell['27']) 
     L21     = np.zeros(lmax, dtype=float)
@@ -334,32 +334,9 @@ def cholesky_matrix_elements_wcorr(N_ell, lmax):
         
     return L11, L21, L22, L33, L43, L44, L55, L65, L66
 
-def cholesky_matrix_elements_wocorr(N_ell, lmax):
-    L11     = np.zeros(lmax, dtype=float)
-    L11[2:] = np.sqrt(N_ell['27']) 
-    L21     = np.zeros(lmax, dtype=float)
-    L22     = np.zeros(lmax, dtype=float)
-    L22[2:] = np.sqrt(N_ell['39'])
-    
-    L33     = np.zeros(lmax, dtype=float)
-    L33[2:] = np.sqrt(N_ell['93']) 
-    L43     = np.zeros(lmax, dtype=float)
-    L44     = np.zeros(lmax, dtype=float)
-    L44[2:] = np.sqrt(N_ell['145'])
-    
-    L55     = np.zeros(lmax, dtype=float)
-    L55[2:] = np.sqrt(N_ell['225']) 
-    L65     = np.zeros(lmax, dtype=float)
-    L66     = np.zeros(lmax, dtype=float)
-    L66[2:] = np.sqrt(N_ell['280'])
-        
-    return L11, L21, L22, L33, L43, L44, L55, L65, L66
 
-def gen_noise_maps(nside, lmax, N_ell,corr=True):
-    if corr:
-        L11, L21, L22, L33, L43, L44, L55, L65, L66 = cholesky_matrix_elements_wcorr(N_ell, lmax)
-    else:
-        L11, L21, L22, L33, L43, L44, L55, L65, L66 = cholesky_matrix_elements_wocorr(N_ell, lmax)
+def gen_noise_maps(nside, lmax, N_ell):
+    L11, L21, L22, L33, L43, L44, L55, L65, L66 = cholesky_matrix_elements(N_ell, lmax)
     
     alm     = rnd_alm(lmax)
     blm     = rnd_alm(lmax)
@@ -387,19 +364,15 @@ def gen_noise_maps(nside, lmax, N_ell,corr=True):
 class Noise:
     nlevp = np.array([71,36,8,10,22,54,71,36,8,10,22,54])
 
-    def __init__(self,nside,atm_noise=False,atm_corr=False):
+    def __init__(self,nside,atm_noise=False):
         self.nside = nside
         self.lmax = 3 * nside - 1
         self.fsky = 0.6
         self.sensitivity_mode = 2
         self.atm_noise = atm_noise
-        self.atm_corr = atm_corr
         if atm_noise:
             self.Nell = SO_LAT_Nell(self.sensitivity_mode,self.fsky,self.lmax)
-            if atm_corr:
-                print("Noise Model: Atmospheric noise with correlation")
-            else:
-                print("Noise Model: Atmospheric noise without correlation")
+            print("Noise Model: Atmospheric noise")
         else:
             print("Noise Model: White noise")
 
@@ -424,10 +397,10 @@ class Noise:
         return noise[:,1:, :] * np.sqrt(2)
     
     def noiseQUatm(self):
-        q1 =  gen_noise_maps(self.nside, self.lmax, self.Nell, self.atm_corr)
-        u1 = gen_noise_maps(self.nside, self.lmax, self.Nell, self.atm_corr)
-        q2 =  gen_noise_maps(self.nside, self.lmax, self.Nell, self.atm_corr)
-        u2 = gen_noise_maps(self.nside, self.lmax, self.Nell, self.atm_corr) 
+        q1 =  gen_noise_maps(self.nside, self.lmax, self.Nell)
+        u1 = gen_noise_maps(self.nside, self.lmax, self.Nell)
+        q2 =  gen_noise_maps(self.nside, self.lmax, self.Nell)
+        u2 = gen_noise_maps(self.nside, self.lmax, self.Nell) 
         qu = []
         for i in range(len(q1)):
             qu.append([q1[i],u1[i]])
@@ -443,12 +416,10 @@ class LATsky:
     for i in range(len(freqs)):
         configs[freqs[i]] = {'fwhm':fwhm[i],'nlevp':nlevp[i]}
     
-    def __init__(self,libdir,nside,alpha,dust,synch,beta,atm_noise=False,atm_corr=False,nhits=False,bandpass=False):
+    def __init__(self,libdir,nside,alpha,dust,synch,beta,atm_noise=False,nhits=False,bandpass=False):
         fldname = ''
         if atm_noise:
             fldname += '_atm_noise'
-        if atm_corr:
-            fldname += '_corr'
         self.libdir = os.path.join(libdir, 'LAT'+fldname)
         os.makedirs(self.libdir, exist_ok=True)
         self.config = self.configs
@@ -458,7 +429,7 @@ class LATsky:
         self.foreground = Foreground(libdir,nside,dust,synch,bandpass)
         self.dust = dust
         self.synch = synch
-        self.noise = Noise(nside,atm_noise,atm_corr)
+        self.noise = Noise(nside,atm_noise)
         if type(beta) == list:
             assert len(beta) == len(self.freqs)
             beta_dict = {}
@@ -471,7 +442,6 @@ class LATsky:
         self.beta = beta
         self.mask = Mask(nside,self.libdir).get_mask(nhits)
         self.atm_noise = atm_noise
-        self.atm_corr = atm_corr
         self.nhits = nhits
         if self.nhits:
             raise NotImplementedError("nhits is not implemented yet")

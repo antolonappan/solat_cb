@@ -71,13 +71,14 @@ def bin_cov_matrix(cov, info):
 
 class MLE:
 
-    def __init__(self,libdir,spec_lib,binwidth=20,bmin=20,bmax=1000):
+    def __init__(self,libdir,spec_lib,binwidth=20,bmin=20,bmax=1000,corr=True):
         self.spec = spec_lib
         self.cmb = CMB(libdir,self.spec.lat.nside,self.spec.lat.alpha)
         self.cmb_cls = self.cmb.get_lensed_spectra(dl=False,dtype='a').T
         self.fsky = np.mean(self.spec.mask)
         self.niter_max =100
         self.nside = self.spec.lat.nside
+        self.corr = corr
 
 
 
@@ -113,28 +114,27 @@ class MLE:
         self.ExtParam = 4 # As, Ad, Asd, beta + N alpha_i
         self.Nvar  = self.Nbands + self.ExtParam
 
+        avoid = 1
+        self.MNi  = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid)), dtype=np.uint8)
+        self.MNj  = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid)), dtype=np.uint8)
+        self.MNh  = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid)), dtype=np.uint8)
+        self.MNk  = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid)), dtype=np.uint8)
 
-        self.MNi  = np.zeros((self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1)), dtype=np.uint8)
-        self.MNj  = np.zeros((self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1)), dtype=np.uint8)
-        self.MNh  = np.zeros((self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1)), dtype=np.uint8)
-        self.MNk  = np.zeros((self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1)), dtype=np.uint8)
+        std_i = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid), self.bmax+1), dtype=self.dt)
+        std_j = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid), self.bmax+1), dtype=self.dt)
+        std_h = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid), self.bmax+1), dtype=self.dt)
+        std_k = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid), self.bmax+1), dtype=self.dt)
 
-        std_i = np.zeros((self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), self.bmax+1), dtype=self.dt)
-        std_j = np.zeros((self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), self.bmax+1), dtype=self.dt)
-        std_h = np.zeros((self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), self.bmax+1), dtype=self.dt)
-        std_k = np.zeros((self.Nbands*(self.Nbands-1), self.Nbands*(self.Nbands-1), self.bmax+1), dtype=self.dt)
-
-
+        
         IJidx = [] 
         for ii in range(0, self.Nbands, 1):
             for jj in range(0, self.Nbands, 1):
-                if jj!=ii: # exclude auto-spectra condition
+                if jj!=ii: 
                     IJidx.append((ii,jj))
-        self.IJidx = np.array(IJidx, dtype=np.uint8) # data type valid for <=70 bands, optimizing memory use
-
+        self.IJidx = np.array(IJidx, dtype=np.uint8)
         MNidx = [] 
-        for mm in range(0, self.Nbands*(self.Nbands-1), 1):
-            for nn in range(0, self.Nbands*(self.Nbands-1), 1):
+        for mm in range(0, self.Nbands*(self.Nbands-avoid), 1):
+            for nn in range(0, self.Nbands*(self.Nbands-avoid), 1):
                     MNidx.append((mm,nn))
         self.MNidx = np.array(MNidx, dtype=np.uint16) # data type valid for <=70 bands, optimizing memory use
 
@@ -152,6 +152,7 @@ class MLE:
         self.std_j = np.deg2rad(std_j/60)/(2*np.sqrt(2*np.log(2)))
         self.std_h = np.deg2rad(std_h/60)/(2*np.sqrt(2*np.log(2)))
         self.std_k = np.deg2rad(std_k/60)/(2*np.sqrt(2*np.log(2)))
+
     
     def get_index(self,mn_pair):
         mm, nn = mn_pair
