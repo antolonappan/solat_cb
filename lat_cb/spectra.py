@@ -15,9 +15,7 @@ class Spectra:
         fldname = ''
         if self.lat.atm_noise:
             fldname += '_atm'
-        if self.lat.atm_corr:
-            fldname += '_corr'
-        self.lmax = 1000#3*nside-1
+        self.lmax = 3*self.lat.nside-1
         libdiri = os.path.join(libdir,f'spectra_{self.nside}'+fldname)
         comdir = os.path.join(libdir,f'spectra_{self.nside}'+'_common')
         self.__set_dir__(libdiri,comdir)
