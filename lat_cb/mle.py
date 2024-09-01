@@ -71,14 +71,14 @@ def bin_cov_matrix(cov, info):
 
 class MLE:
 
-    def __init__(self,libdir,spec_lib,binwidth=20,bmin=20,bmax=1000,corr=True):
+    def __init__(self,libdir,spec_lib,binwidth=20,bmin=20,bmax=1000,rm_corr=False):
         self.spec = spec_lib
         self.cmb = CMB(libdir,self.spec.lat.nside,self.spec.lat.alpha)
         self.cmb_cls = self.cmb.get_lensed_spectra(dl=False,dtype='a').T
         self.fsky = np.mean(self.spec.mask)
         self.niter_max =100
         self.nside = self.spec.lat.nside
-        self.corr = corr
+        self.rm_corr = rm_corr
 
 
 
@@ -115,10 +115,10 @@ class MLE:
         self.Nvar  = self.Nbands + self.ExtParam
         
 
-        if self.corr:
-            avoid = 1
-        else:
+        if self.rm_corr:
             avoid = 4
+        else:
+            avoid = 1
         
         self.avoid = avoid
 
@@ -132,20 +132,21 @@ class MLE:
         std_h = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid), self.bmax+1), dtype=self.dt)
         std_k = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid), self.bmax+1), dtype=self.dt)
 
-        if self.corr:
-            IJidx = [] 
-            for ii in range(0, self.Nbands, 1):
-                for jj in range(0, self.Nbands, 1):
-                    if jj!=ii: 
-                        IJidx.append((ii,jj))
-            self.IJidx = np.array(IJidx, dtype=np.uint8)
-        else:
+        if self.rm_corr:
             IJidx = [] 
             for ii in range(0, self.Nbands, 1):
                 for jj in range(0, self.Nbands, 1):
                     if not self.same_tube(ii,jj):
                         IJidx.append((ii,jj))
             self.IJidx = np.array(IJidx, dtype=np.uint8)
+        else:
+            IJidx = [] 
+            for ii in range(0, self.Nbands, 1):
+                for jj in range(0, self.Nbands, 1):
+                    if jj!=ii: 
+                        IJidx.append((ii,jj))
+            self.IJidx = np.array(IJidx, dtype=np.uint8)
+
         MNidx = [] 
         for mm in range(0, self.Nbands*(self.Nbands-avoid), 1):
             for nn in range(0, self.Nbands*(self.Nbands-avoid), 1):
