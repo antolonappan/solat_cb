@@ -7,7 +7,7 @@ import os
 import pickle as pl
 from tqdm import tqdm
 from lat_cb import mpi
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  
 from typing import Dict, Optional, Any, Union, List, Tuple
 
 
