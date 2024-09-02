@@ -164,6 +164,7 @@ def SO_LAT_Nell(
     }
 
     return N_ell_P_LA
+
 class CMB:
 
     def __init__(
@@ -407,6 +408,7 @@ class CMB:
             QU = hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.lmax)
             hp.write_map(fname, QU, dtype=np.float64)
             return QU
+
 class BandpassInt:
     def __init__(
         self,
@@ -449,6 +451,7 @@ class BandpassInt:
         plt.legend(title="Bands")
         plt.tight_layout()
         plt.show()
+
 class Foreground:
     def __init__(
         self,
@@ -555,10 +558,11 @@ class Foreground:
             mpi.barrier()
 
             return maps[1:].value
+
 class Noise:
     nlevp = np.array([71, 36, 8, 10, 22, 54, 71, 36, 8, 10, 22, 54])
 
-    def __init__(self, nside: int, atm_noise: bool = False):
+    def __init__(self, nside: int, atm_noise: bool = False, nhits: bool = False):
         """
         Initializes the Noise class for generating noise maps with or without atmospheric noise.
 
@@ -576,6 +580,21 @@ class Noise:
             print("Noise Model: Atmospheric noise")
         else:
             print("Noise Model: White noise")
+        
+        self.mask = Mask(nside=self.nside).get_mask(False)
+        self.hits_map = Mask(nside=self.nside).get_mask(True)
+        self.nhits = nhits
+        self.fac = self.get_fac()
+    
+    def get_fac(self):
+        fac = np.sqrt(2)*self.mask
+        if self.nhits:
+            print("HITS map: enabled")
+            grt_zero = self.hits_map > 0
+            self.hits_map[grt_zero] /= np.median(self.hits_map[grt_zero])
+            with np.errstate(divide='ignore'):
+                fac[grt_zero] /= np.sqrt(self.hits_map[grt_zero])
+        return fac
 
     @property
     def rand_alm(self) -> np.ndarray:
@@ -692,7 +711,7 @@ class Noise:
         Returns:
         np.ndarray: An array of white noise Q and U maps.
         """
-        depth_p = self.nlevp[:6]  # Assuming the first six values are used
+        depth_p = self.nlevp  # Assuming the first six values are used
         depth_i = depth_p / np.sqrt(2)
         pix_amin2 = (
             4.0 * np.pi / float(hp.nside2npix(self.nside)) * (180.0 * 60.0 / np.pi) ** 2
@@ -704,7 +723,7 @@ class Noise:
         noise[:, 0, :] *= sigma_pix_I[:, None]
         noise[:, 1, :] *= sigma_pix_P[:, None]
         noise[:, 2, :] *= sigma_pix_P[:, None]
-        return noise[:, 1:, :] * np.sqrt(2)
+        return noise[:, 1:, :] * self.fac
 
     def noiseQUatm(self) -> np.ndarray:
         """
@@ -717,12 +736,14 @@ class Noise:
         u1 = self.atm_noise_maps()
         q2 = self.atm_noise_maps()
         u2 = self.atm_noise_maps()
+
         qu = []
         for i in range(len(q1)):
             qu.append([q1[i], u1[i]])
         for i in range(len(q2)):
             qu.append([q2[i], u2[i]])
-        return np.array(qu) * np.sqrt(2)
+        return np.array(qu) * self.fac
+
 class LATsky:
     freqs = np.array(
         [
@@ -770,6 +791,7 @@ class LATsky:
         bandpass (bool, optional): If True, applies bandpass integration. Defaults to False.
         """
         fldname = "_atm_noise" if atm_noise else ""
+        fldname += "_nhits" if nhits else ""
         self.libdir = os.path.join(libdir, "LAT" + fldname)
         os.makedirs(self.libdir, exist_ok=True)
 
@@ -784,7 +806,8 @@ class LATsky:
         self.foreground = Foreground(libdir, nside, dust, synch, bandpass)
         self.dust_model = dust
         self.sync_model = synch
-        self.noise = Noise(nside, atm_noise)
+        self.nhits = nhits
+        self.noise = Noise(nside, atm_noise, nhits)
 
         if isinstance(beta, list):
             assert len(beta) == len(
@@ -797,11 +820,8 @@ class LATsky:
                 self.config[f]["beta"] = beta
 
         self.beta = beta
-        self.mask = Mask(nside, self.libdir).get_mask(nhits)
+        self.mask = Mask(nside).get_mask(False)
         self.atm_noise = atm_noise
-        self.nhits = nhits
-        if nhits:
-            raise NotImplementedError("nhits is not implemented yet")
         self.bandpass = bandpass
         if bandpass:
             print("Bandpass is enabled")
@@ -885,7 +905,7 @@ class LATsky:
         for i in tqdm(range(len(self.freqs)), desc="Saving Observed QUs", unit="band"):
             band = self.freqs[i]
             fname = self.obsQUfname(idx, band)
-            hp.write_map(fname, sky[i], dtype=np.float64)
+            hp.write_map(fname, sky[i]*self.mask, dtype=np.float64)
 
     def obsQU(self, idx: int, band: str) -> np.ndarray:
         """
@@ -904,6 +924,7 @@ class LATsky:
         else:
             self.saveObsQUs(idx)
             return hp.read_map(fname, field=[0, 1])
+
 class Mask:
     def __init__(self, nside: int, libdir: Optional[str] = None) -> None:
         """

@@ -24,9 +24,8 @@ class Spectra:
         self.fg = Foreground(
             libdir, self.nside, self.lat.dust_model, self.lat.sync_model, False
         )
-        fldname = ""
-        if self.lat.atm_noise:
-            fldname += "_atm"
+        fldname = "_atm" if self.lat.atm_noise else ""
+        fldname += "_nhits" if self.lat.nhits else ""
         self.lmax = 3 * self.lat.nside - 1
         libdiri = os.path.join(libdir, f"spectra_{self.nside}" + fldname)
         comdir = os.path.join(libdir, f"spectra_{self.nside}" + "_common")
@@ -34,10 +33,7 @@ class Spectra:
         self.binInfo = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
         self.Nell = self.binInfo.get_n_bands()
         self.mask = self.lat.mask
-        if not self.lat.nhits:
-            self.fsky = np.average(self.mask)
-        else:
-            raise NotImplementedError("nhits not implemented")
+        self.fsky = np.average(self.mask)
         self.bands = LATsky.freqs
         self.Nbands = len(self.bands)
 
