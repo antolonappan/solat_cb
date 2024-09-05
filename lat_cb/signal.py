@@ -348,11 +348,11 @@ class CMB:
         Notes:
         The method applies a rotation by `alpha` degrees to the E and B mode spectra to account for cosmic birefringence.
         """
-        powers = self.get_lensed_spectra(dl=dl)
+        powers = self.get_lensed_spectra(dl=dl) 
         pow = {}
         pow["tt"] = powers["tt"]
         pow["te"] = powers["te"] * np.cos(2 * inrad(beta))  # type: ignore
-        pow["ee"] = (powers["ee"] * np.cos(inrad(2 * beta)) ** 2) - (powers["bb"] * np.sin(inrad(2 * beta)) ** 2)  # type: ignore
+        pow["ee"] = (powers["ee"] * np.cos(inrad(2 * beta)) ** 2) + (powers["bb"] * np.sin(inrad(2 * beta)) ** 2)  # type: ignore
         pow["bb"] = (powers["ee"] * np.sin(inrad(2 * beta)) ** 2) + (powers["bb"] * np.cos(inrad(2 * beta)) ** 2)  # type: ignore
         pow["eb"] = 0.5 * (powers["ee"] - powers["bb"]) * np.sin(inrad(4 * beta))  # type: ignore
         pow["tb"] = powers["te"] * np.sin(2 * inrad(beta))  # type: ignore
