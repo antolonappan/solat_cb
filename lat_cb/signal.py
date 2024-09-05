@@ -171,7 +171,7 @@ class CMB:
         self,
         libdir: str,
         nside: int,
-        alpha: Optional[float] = None,
+        beta: Optional[float] = None,
         Acb: Optional[float] = None,
         model: str = "iso",
     ):
@@ -181,7 +181,7 @@ class CMB:
         Parameters:
         libdir (str): Directory where the CMB data will be stored.
         nside (int): Resolution parameter for the HEALPix map.
-        alpha (Optional[float]): Parameter for the isotropic model, should be provided if model is 'iso'.
+        beta (Optional[float]): Parameter for the isotropic model, should be provided if model is 'iso'.
         Acb (Optional[float]): Parameter for the anisotropic model, should be provided if model is 'aniso'.
         model (str): Model type, either 'iso' for isotropic or 'aniso' for anisotropic. Defaults to 'iso'.
 
@@ -201,19 +201,19 @@ class CMB:
 
         self.libdir = os.path.join(libdir, "CMB")
         os.makedirs(self.libdir, exist_ok=True)
-        self.nside = nside
-        self.alpha = alpha
-        self.lmax = 3 * nside - 1
-        spectra = os.path.join(os.path.dirname(os.path.realpath(__file__)), "spectra.pkl")
+        self.nside  = nside
+        self.beta   = beta
+        self.lmax   = 3 * nside - 1
+        spectra     = os.path.join(os.path.dirname(os.path.realpath(__file__)), "spectra.pkl")
         if os.path.isfile(spectra):
             self.powers = pl.load(open(spectra, "rb"))
         else:
             self.powers = self.compute_powers()
-        self.Acb = Acb
+        self.Acb    = Acb
         assert model in ["iso", "aniso"], "model should be 'iso' or 'aniso'"
-        self.model = model
+        self.model  = model
         if model == "iso":
-            assert alpha is not None, "alpha should be provided for isotropic model"
+            assert beta is not None, "beta should be provided for isotropic model"
         if model == "aniso":
             assert Acb is not None, "Acb should be provided for anisotropic model"
         if self.model == "aniso":
@@ -224,10 +224,10 @@ class CMB:
         compute the CMB power spectra using CAMB.
         """
         ini_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), "cb.ini")
-        spectra = os.path.join(os.path.dirname(os.path.realpath(__file__)), "spectra.pkl")
-        params = camb.read_ini(ini_file)
-        results = camb.get_results(params)
-        powers = {}
+        spectra  = os.path.join(os.path.dirname(os.path.realpath(__file__)), "spectra.pkl")
+        params   = camb.read_ini(ini_file)
+        results  = camb.get_results(params)
+        powers   = {}
         powers["cls"] = results.get_cmb_power_spectra(
             params, CMB_unit="muK", raw_cl=True
         )
@@ -320,13 +320,13 @@ class CMB:
             raise ValueError("dtype should be 'd' or 'a'")
 
     def get_cb_lensed_spectra(
-        self, alpha: float = 0.3, dl: bool = True, dtype: str = "d", new: bool = False
+        self, beta: float = 0.3, dl: bool = True, dtype: str = "d", new: bool = False
     ) -> Union[Dict[str, np.ndarray], np.ndarray]:
         """
-        Calculate the cosmic birefringence (CB) lensed spectra with a given rotation angle `alpha`.
+        Calculate the cosmic birefringence (CB) lensed spectra with a given rotation angle `beta`.
 
         Parameters:
-        alpha (float, optional): The rotation angle in degrees for the cosmic birefringence effect. Defaults to 0.3 degrees.
+        beta (float, optional): The rotation angle in degrees for the cosmic birefringence effect. Defaults to 0.3 degrees.
         dl (bool, optional): If True, returns Dl (C_l * l * (l + 1) / 2π). Defaults to True.
         dtype (str, optional): Specifies the format of the returned spectra.
                                - 'd' returns a dictionary with keys 'tt', 'ee', 'bb', 'te', 'eb', 'tb'.
@@ -351,11 +351,11 @@ class CMB:
         powers = self.get_lensed_spectra(dl=dl)
         pow = {}
         pow["tt"] = powers["tt"]
-        pow["te"] = powers["te"] * np.cos(2 * inrad(alpha))  # type: ignore
-        pow["ee"] = (powers["ee"] * np.cos(inrad(2 * alpha)) ** 2) - (powers["bb"] * np.sin(inrad(2 * alpha)) ** 2)  # type: ignore
-        pow["bb"] = (powers["ee"] * np.sin(inrad(2 * alpha)) ** 2) + (powers["bb"] * np.cos(inrad(2 * alpha)) ** 2)  # type: ignore
-        pow["eb"] = 0.5 * (powers["ee"] - powers["bb"]) * np.sin(inrad(4 * alpha))  # type: ignore
-        pow["tb"] = powers["te"] * np.sin(2 * inrad(alpha))  # type: ignore
+        pow["te"] = powers["te"] * np.cos(2 * inrad(beta))  # type: ignore
+        pow["ee"] = (powers["ee"] * np.cos(inrad(2 * beta)) ** 2) - (powers["bb"] * np.sin(inrad(2 * beta)) ** 2)  # type: ignore
+        pow["bb"] = (powers["ee"] * np.sin(inrad(2 * beta)) ** 2) + (powers["bb"] * np.cos(inrad(2 * beta)) ** 2)  # type: ignore
+        pow["eb"] = 0.5 * (powers["ee"] - powers["bb"]) * np.sin(inrad(4 * beta))  # type: ignore
+        pow["tb"] = powers["te"] * np.sin(2 * inrad(beta))  # type: ignore
         if dtype == "d":
             return pow
         elif dtype == "a":
@@ -389,7 +389,7 @@ class CMB:
         """
         fname = os.path.join(
             self.libdir,
-            f"cmbQU_N{self.nside}_{str(self.alpha).replace('.','p')}_{idx:03d}.fits",
+            f"cmbQU_N{self.nside}_{str(self.beta).replace('.','p')}_{idx:03d}.fits",
         )
         if os.path.isfile(fname):
             return hp.read_map(fname, field=[0, 1])  # type: ignore
@@ -403,8 +403,8 @@ class CMB:
                 new=True,
             )
             del T
-            Elm = (E * np.cos(inrad(2 * self.alpha))) - (B * np.sin(inrad(2 * self.alpha)))  # type: ignore
-            Blm = (E * np.sin(inrad(2 * self.alpha))) + (B * np.cos(inrad(2 * self.alpha)))  # type: ignore
+            Elm = (E * np.cos(inrad(2 * self.beta))) - (B * np.sin(inrad(2 * self.beta)))  # type: ignore
+            Blm = (E * np.sin(inrad(2 * self.beta))) + (B * np.cos(inrad(2 * self.beta)))  # type: ignore
             QU = hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.lmax)
             hp.write_map(fname, QU, dtype=np.float64)
             return QU
@@ -768,10 +768,10 @@ class LATsky:
         self,
         libdir: str,
         nside: int,
-        alpha: float,
+        beta: float,
         dust: int,
         synch: int,
-        beta: Union[float, List[float]],
+        alpha: Union[float, List[float]],
         atm_noise: bool = False,
         nhits: bool = False,
         bandpass: bool = False,
@@ -782,16 +782,16 @@ class LATsky:
         Parameters:
         libdir (str): Directory where the sky maps will be stored.
         nside (int): HEALPix resolution parameter.
-        alpha (float): Rotation angle for cosmic birefringence in degrees.
+        beta (float): Rotation angle for cosmic birefringence in degrees.
         dust (int): Model number for the dust emission.
         synch (int): Model number for the synchrotron emission.
-        beta (Union[float, List[float]]): Beta parameter(s) for frequency bands. If a list, should match the number of frequency bands.
+        alpha (Union[float, List[float]]): polarisation angle(s) for frequency bands. If a list, should match the number of frequency bands.
         atm_noise (bool, optional): If True, includes atmospheric noise. Defaults to False.
         nhits (bool, optional): If True, includes hit count map. Defaults to False.
         bandpass (bool, optional): If True, applies bandpass integration. Defaults to False.
         """
-        fldname = "_atm_noise" if atm_noise else ""
-        fldname += "_nhits" if nhits else ""
+        fldname     = "_atm_noise" if atm_noise else ""
+        fldname    += "_nhits" if nhits else ""
         self.libdir = os.path.join(libdir, "LAT" + fldname)
         os.makedirs(self.libdir, exist_ok=True)
 
@@ -799,30 +799,30 @@ class LATsky:
         configs = {
             self.freqs[i]: {"fwhm": self.fwhm[i], "nlevp": self.nlevp[i]} for i in range(len(self.freqs))
         }
-        self.config = configs
-        self.nside = nside
-        self.alpha = alpha
-        self.cmb = CMB(libdir, nside, alpha)
+        self.config     = configs
+        self.nside      = nside
+        self.beta       = beta
+        self.cmb        = CMB(libdir, nside, beta)
         self.foreground = Foreground(libdir, nside, dust, synch, bandpass)
         self.dust_model = dust
         self.sync_model = synch
-        self.nhits = nhits
-        self.noise = Noise(nside, atm_noise, nhits)
+        self.nhits      = nhits
+        self.noise      = Noise(nside, atm_noise, nhits)
 
-        if isinstance(beta, list):
-            assert len(beta) == len(
+        if isinstance(alpha, list):
+            assert len(alpha) == len(
                 self.freqs
-            ), "Length of beta list must match the number of frequency bands."
-            for i, b in enumerate(beta):
-                self.config[self.freqs[i]]["beta"] = b
+            ), "Length of alpha list must match the number of frequency bands."
+            for i, a in enumerate(alpha):
+                self.config[self.freqs[i]]["alpha"] = a
         else:
             for f in self.freqs:
-                self.config[f]["beta"] = beta
+                self.config[f]["alpha"] = alpha
 
-        self.beta = beta
-        self.mask = Mask(nside).get_mask(False)
+        self.alpha     = alpha
+        self.mask      = Mask(nside).get_mask(False)
         self.atm_noise = atm_noise
-        self.bandpass = bandpass
+        self.bandpass  = bandpass
         if bandpass:
             print("Bandpass is enabled")
 
@@ -839,32 +839,32 @@ class LATsky:
         """
         if isinstance(band, (str, np.str_)):
             band = int(band[:-1])
-        cmbQU = np.array(self.cmb.get_cb_lensed_QU(idx))
+        cmbQU  = np.array(self.cmb.get_cb_lensed_QU(idx))
         dustQU = self.foreground.dustQU(band)
         syncQU = self.foreground.syncQU(band)
         return cmbQU + dustQU + syncQU
 
-    def obsQUwBeta(
-        self, idx: int, band: Union[str, int], fwhm: float, beta: float
+    def obsQUwAlpha(
+        self, idx: int, band: Union[str, int], fwhm: float, alpha: float
     ) -> np.ndarray:
         """
-        Generates the observed Q and U Stokes parameters after applying a rotation by beta and smoothing with a Gaussian beam.
+        Generates the observed Q and U Stokes parameters after applying a rotation by alpha and smoothing with a Gaussian beam.
 
         Parameters:
         idx (int): Index for the realization of the CMB map.
         band (Union[str, int]): The frequency band. Can be an integer or a string (e.g., '93GHz').
         fwhm (float): Full-width half-maximum of the Gaussian beam in arcminutes.
-        beta (float): Rotation angle for cosmic birefringence in degrees.
+        alpha (float): Polarisation angle in degrees.
 
         Returns:
         np.ndarray: A NumPy array containing the observed Q and U maps.
         """
         signal = self.signalOnlyQU(idx, band)
-        E, B = hp.map2alm_spin(signal, 2, lmax=self.cmb.lmax)
-        Elm = (E * np.cos(inrad(2 * beta))) - (B * np.sin(inrad(2 * beta)))
-        Blm = (E * np.sin(inrad(2 * beta))) + (B * np.cos(inrad(2 * beta)))
+        E, B   = hp.map2alm_spin(signal, 2, lmax=self.cmb.lmax)
+        Elm    = (E * np.cos(inrad(2 * alpha))) - (B * np.sin(inrad(2 * alpha)))
+        Blm    = (E * np.sin(inrad(2 * alpha))) + (B * np.cos(inrad(2 * alpha)))
         del (E, B)
-        bl = hp.gauss_beam(np.radians(fwhm / 60), lmax=self.cmb.lmax)
+        bl     = hp.gauss_beam(np.radians(fwhm / 60), lmax=self.cmb.lmax)
         hp.almxfl(Elm, bl, inplace=True)
         hp.almxfl(Blm, bl, inplace=True)
         return hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.cmb.lmax)
@@ -880,9 +880,9 @@ class LATsky:
         Returns:
         str: The file path for the observed Q and U maps.
         """
-        fwhm = self.config[band]["fwhm"]
-        beta = self.config[band]["beta"]
-        alpha = self.cmb.alpha
+        fwhm  = self.config[band]["fwhm"]
+        alpha = self.config[band]["alpha"]
+        beta = self.cmb.beta
         return os.path.join(
             self.libdir,
             f"obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{fwhm}_{idx:03d}.fits",
@@ -897,13 +897,13 @@ class LATsky:
         """
         signal = []
         for band in self.freqs:
-            fwhm = self.config[band]["fwhm"]
-            beta = self.config[band]["beta"]
-            signal.append(self.obsQUwBeta(idx, band, fwhm, beta))
+            fwhm  = self.config[band]["fwhm"]
+            alpha = self.config[band]["alpha"]
+            signal.append(self.obsQUwAlpha(idx, band, fwhm, alpha))
         noise = self.noise.noiseQU()
-        sky = np.array(signal) + noise
+        sky   = np.array(signal) + noise
         for i in tqdm(range(len(self.freqs)), desc="Saving Observed QUs", unit="band"):
-            band = self.freqs[i]
+            band  = self.freqs[i]
             fname = self.obsQUfname(idx, band)
             hp.write_map(fname, sky[i]*self.mask, dtype=np.float64)
 
