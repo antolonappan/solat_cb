@@ -847,7 +847,7 @@ class LATsky:
         self, idx: int, band: Union[str, int], fwhm: float, alpha: float
     ) -> np.ndarray:
         """
-        Generates the observed Q and U Stokes parameters after applying a rotation by alpha and smoothing with a Gaussian beam.
+        Generates the observed Q and U Stokes parameters after applying a rotation by alpha and smoothing with the pixel window function a Gaussian beam.
 
         Parameters:
         idx (int): Index for the realization of the CMB map.
@@ -863,9 +863,10 @@ class LATsky:
         Elm    = (E * np.cos(inrad(2 * alpha))) - (B * np.sin(inrad(2 * alpha)))
         Blm    = (E * np.sin(inrad(2 * alpha))) + (B * np.cos(inrad(2 * alpha)))
         del (E, B)
-        bl     = hp.gauss_beam(np.radians(fwhm / 60), lmax=self.cmb.lmax)
-        hp.almxfl(Elm, bl, inplace=True)
-        hp.almxfl(Blm, bl, inplace=True)
+        bl     = hp.gauss_beam(inrad(fwhm / 60), lmax=self.cmb.lmax, pol=True)
+        pwf    = np.array(hp.pixwin(self.nside, pol=True, lmax=self.cmb.lmax))
+        hp.almxfl(Elm, bl[:,1]*pwf[1,:], inplace=True)
+        hp.almxfl(Blm, bl[:,1]*pwf[1,:], inplace=True)
         return hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.cmb.lmax)
 
     def obsQUfname(self, idx: int, band: str) -> str:
