@@ -39,14 +39,14 @@ def cli(cl: np.ndarray) -> np.ndarray:
     ret[np.where(cl > 0)] = 1.0 / cl[np.where(cl > 0)]
     return ret
 
-def SO_LAT_Nell(
+def SO_LAT_Nell_v3_0_0(
     sensitivity_mode: int,
     f_sky: float,
     ell_max: int,
 ) -> Dict[str, np.ndarray]:
     """
     Calculate the noise power spectrum for the SO LAT experiment.
-
+    v3.0.0 model adapted from https://github.com/simonsobs/so_noise_models/blob/master/so_models_v3/SO_Noise_Calculator_Public_v3_0_0.py
     Parameters:
     sensitivity_mode (int): The sensitivity mode of the experiment.
                             Should be either 1 or 2.
@@ -61,20 +61,20 @@ def SO_LAT_Nell(
     assert sensitivity_mode == 1 or sensitivity_mode == 2
     assert f_sky > 0.0 and f_sky <= 1.0
     assert ell_max <= 2e4
-    NTubes_LF = 1
-    NTubes_MF = 4
+    NTubes_LF  = 1
+    NTubes_MF  = 4
     NTubes_UHF = 2
 
-    S_LA_27 = np.array([1.0e9, 48.0, 35.0]) * np.sqrt(1.0 / NTubes_LF)
-    S_LA_39 = np.array([1.0e9, 24.0, 18.0]) * np.sqrt(1.0 / NTubes_LF)
-    S_LA_93 = np.array([1.0e9, 5.4, 3.9]) * np.sqrt(4.0 / NTubes_MF)
-    S_LA_145 = np.array([1.0e9, 6.7, 4.2]) * np.sqrt(4.0 / NTubes_MF)
+    S_LA_27  = np.array([1.0e9, 48.0, 35.0]) * np.sqrt(1.0 / NTubes_LF)
+    S_LA_39  = np.array([1.0e9, 24.0, 18.0]) * np.sqrt(1.0 / NTubes_LF)
+    S_LA_93  = np.array([1.0e9,  5.4,  3.9]) * np.sqrt(4.0 / NTubes_MF)
+    S_LA_145 = np.array([1.0e9,  6.7,  4.2]) * np.sqrt(4.0 / NTubes_MF)
     S_LA_225 = np.array([1.0e9, 15.0, 10.0]) * np.sqrt(2.0 / NTubes_UHF)
     S_LA_280 = np.array([1.0e9, 36.0, 25.0]) * np.sqrt(2.0 / NTubes_UHF)
 
-    f_knee_pol_LA_27 = 700.0
-    f_knee_pol_LA_39 = 700.0
-    f_knee_pol_LA_93 = 700.0
+    f_knee_pol_LA_27  = 700.0
+    f_knee_pol_LA_39  = 700.0
+    f_knee_pol_LA_93  = 700.0
     f_knee_pol_LA_145 = 700.0
     f_knee_pol_LA_225 = 700.0
     f_knee_pol_LA_280 = 700.0
@@ -87,7 +87,7 @@ def SO_LAT_Nell(
     t = t * 0.2  ## retention after observing efficiency and cuts
     t = t * 0.85  ## a kludge for the noise non-uniformity of the map edges
     A_SR = 4.0 * np.pi * f_sky  ## sky areas in steradians
-    A_deg = A_SR * (180 / np.pi) ** 2  ## sky area in square degrees
+    # A_deg = A_SR * (180 / np.pi) ** 2  ## sky area in square degrees
     # print("sky area: ", A_deg, "degrees^2")
 
     ####################################################################
@@ -97,9 +97,9 @@ def SO_LAT_Nell(
     ####################################################################
     ###   CALCULATE N(ell) for Temperature
     ## calculate the experimental weight
-    W_T_27 = S_LA_27[sensitivity_mode] / np.sqrt(t)
-    W_T_39 = S_LA_39[sensitivity_mode] / np.sqrt(t)
-    W_T_93 = S_LA_93[sensitivity_mode] / np.sqrt(t)
+    W_T_27  = S_LA_27[sensitivity_mode] / np.sqrt(t)
+    W_T_39  = S_LA_39[sensitivity_mode] / np.sqrt(t)
+    W_T_93  = S_LA_93[sensitivity_mode] / np.sqrt(t)
     W_T_145 = S_LA_145[sensitivity_mode] / np.sqrt(t)
     W_T_225 = S_LA_225[sensitivity_mode] / np.sqrt(t)
     W_T_280 = S_LA_280[sensitivity_mode] / np.sqrt(t)
@@ -107,17 +107,17 @@ def SO_LAT_Nell(
     ####################################################################
     ###   CALCULATE N(ell) for Polarization
     ## calculate the atmospheric contribution for P
-    AN_P_27 = (ell / f_knee_pol_LA_27) ** alpha_pol + 1.0
-    AN_P_39 = (ell / f_knee_pol_LA_39) ** alpha_pol + 1.0
-    AN_P_93 = (ell / f_knee_pol_LA_93) ** alpha_pol + 1.0
+    AN_P_27  = (ell / f_knee_pol_LA_27) ** alpha_pol + 1.0
+    AN_P_39  = (ell / f_knee_pol_LA_39) ** alpha_pol + 1.0
+    AN_P_93  = (ell / f_knee_pol_LA_93) ** alpha_pol + 1.0
     AN_P_145 = (ell / f_knee_pol_LA_145) ** alpha_pol + 1.0
     AN_P_225 = (ell / f_knee_pol_LA_225) ** alpha_pol + 1.0
     AN_P_280 = (ell / f_knee_pol_LA_280) ** alpha_pol + 1.0
 
     ## calculate N(ell)
-    N_ell_P_27 = (W_T_27 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_27
-    N_ell_P_39 = (W_T_39 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_39
-    N_ell_P_93 = (W_T_93 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_93
+    N_ell_P_27  = ( W_T_27 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_27
+    N_ell_P_39  = ( W_T_39 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_39
+    N_ell_P_93  = ( W_T_93 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_93
     N_ell_P_145 = (W_T_145 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_145
     N_ell_P_225 = (W_T_225 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_225
     N_ell_P_280 = (W_T_280 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_280
@@ -145,8 +145,8 @@ def SO_LAT_Nell(
     N_ell_P_280_atm = (
         (W_T_280 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_280) ** alpha_pol
     )
-    N_ell_P_27x39 = r_atm * np.sqrt(N_ell_P_27_atm * N_ell_P_39_atm)
-    N_ell_P_93x145 = r_atm * np.sqrt(N_ell_P_93_atm * N_ell_P_145_atm)
+    N_ell_P_27x39   = r_atm * np.sqrt( N_ell_P_27_atm * N_ell_P_39_atm)
+    N_ell_P_93x145  = r_atm * np.sqrt( N_ell_P_93_atm * N_ell_P_145_atm)
     N_ell_P_225x280 = r_atm * np.sqrt(N_ell_P_225_atm * N_ell_P_280_atm)
 
     ## make a dictionary of noise curves for P
@@ -569,21 +569,21 @@ class Noise:
         nside (int): HEALPix resolution parameter.
         atm_noise (bool, optional): If True, includes atmospheric noise. Defaults to False.
         """
-        self.nside = nside
-        self.lmax = 3 * nside - 1
+        self.nside            = nside
+        self.lmax             = 3 * nside - 1
         self.sensitivity_mode = 2
-        self.atm_noise = atm_noise
+        self.atm_noise        = atm_noise
         if atm_noise:
             self.fsky = 0.6  # Example value for f_sky; adjust as necessary
-            self.Nell = SO_LAT_Nell(self.sensitivity_mode, self.fsky, self.lmax)
-            print("Noise Model: Atmospheric noise")
+            self.Nell = SO_LAT_Nell_v3_0_0(self.sensitivity_mode, self.fsky, self.lmax)
+            print("Noise Model: Atmospheric noise v3.0.0")
         else:
             print("Noise Model: White noise")
         
-        self.mask = Mask(nside=self.nside).get_mask(False)
+        self.mask     = Mask(nside=self.nside).get_mask(False)
         self.hits_map = Mask(nside=self.nside).get_mask(True)
-        self.nhits = nhits
-        self.fac = self.get_fac()
+        self.nhits    = nhits
+        self.fac      = self.get_fac()
     
     def get_fac(self):
         fac = np.sqrt(2)*self.mask
@@ -626,31 +626,31 @@ class Noise:
         Returns:
         Tuple of nine np.ndarray elements representing the Cholesky matrix components.
         """
-        L11 = np.zeros(self.lmax, dtype=float)
+        L11     = np.zeros(self.lmax, dtype=float)
         L11[2:] = np.sqrt(self.Nell["27"])
-        L21 = np.zeros(self.lmax, dtype=float)
+        L21     = np.zeros(self.lmax, dtype=float)
         L21[2:] = self.Nell["27x39"] / np.sqrt(self.Nell["27"])
-        L22 = np.zeros(self.lmax, dtype=float)
+        L22     = np.zeros(self.lmax, dtype=float)
         L22[2:] = np.sqrt(
             (self.Nell["27"] * self.Nell["39"] - self.Nell["27x39"] ** 2)
             / self.Nell["27"]
         )
 
-        L33 = np.zeros(self.lmax, dtype=float)
+        L33     = np.zeros(self.lmax, dtype=float)
         L33[2:] = np.sqrt(self.Nell["93"])
-        L43 = np.zeros(self.lmax, dtype=float)
+        L43     = np.zeros(self.lmax, dtype=float)
         L43[2:] = self.Nell["93x145"] / np.sqrt(self.Nell["93"])
-        L44 = np.zeros(self.lmax, dtype=float)
+        L44     = np.zeros(self.lmax, dtype=float)
         L44[2:] = np.sqrt(
             (self.Nell["93"] * self.Nell["145"] - self.Nell["93x145"] ** 2)
             / self.Nell["93"]
         )
 
-        L55 = np.zeros(self.lmax, dtype=float)
+        L55     = np.zeros(self.lmax, dtype=float)
         L55[2:] = np.sqrt(self.Nell["225"])
-        L65 = np.zeros(self.lmax, dtype=float)
+        L65     = np.zeros(self.lmax, dtype=float)
         L65[2:] = self.Nell["225x280"] / np.sqrt(self.Nell["225"])
-        L66 = np.zeros(self.lmax, dtype=float)
+        L66     = np.zeros(self.lmax, dtype=float)
         L66[2:] = np.sqrt(
             (self.Nell["225"] * self.Nell["280"] - self.Nell["225x280"] ** 2)
             / self.Nell["225"]
@@ -667,26 +667,26 @@ class Noise:
         """
         L11, L21, L22, L33, L43, L44, L55, L65, L66 = self.cholesky_matrix_elements
 
-        alm = self.rand_alm
-        blm = self.rand_alm
+        alm    = self.rand_alm
+        blm    = self.rand_alm
         nlm_27 = hp.almxfl(alm, L11)
         nlm_39 = hp.almxfl(alm, L21) + hp.almxfl(blm, L22)
-        n_27 = hp.alm2map(nlm_27, self.nside, pixwin=False)
-        n_39 = hp.alm2map(nlm_39, self.nside, pixwin=False)
+        n_27   = hp.alm2map(nlm_27, self.nside, pixwin=False)
+        n_39   = hp.alm2map(nlm_39, self.nside, pixwin=False)
 
-        clm = self.rand_alm
-        dlm = self.rand_alm
-        nlm_93 = hp.almxfl(clm, L33)
+        clm     = self.rand_alm
+        dlm     = self.rand_alm
+        nlm_93  = hp.almxfl(clm, L33)
         nlm_145 = hp.almxfl(clm, L43) + hp.almxfl(dlm, L44)
-        n_93 = hp.alm2map(nlm_93, self.nside, pixwin=False)
-        n_145 = hp.alm2map(nlm_145, self.nside, pixwin=False)
+        n_93    = hp.alm2map(nlm_93, self.nside, pixwin=False)
+        n_145   = hp.alm2map(nlm_145, self.nside, pixwin=False)
 
-        elm = self.rand_alm
-        flm = self.rand_alm
+        elm     = self.rand_alm
+        flm     = self.rand_alm
         nlm_225 = hp.almxfl(elm, L55)
         nlm_280 = hp.almxfl(elm, L65) + hp.almxfl(flm, L66)
-        n_225 = hp.alm2map(nlm_225, self.nside, pixwin=False)
-        n_280 = hp.alm2map(nlm_280, self.nside, pixwin=False)
+        n_225   = hp.alm2map(nlm_225, self.nside, pixwin=False)
+        n_280   = hp.alm2map(nlm_280, self.nside, pixwin=False)
 
         return np.array([n_27, n_39, n_93, n_145, n_225, n_280])
 
@@ -760,7 +760,7 @@ class LATsky:
             "280b",
         ]
     )
-    fwhm = np.array([7.4, 5.1, 2.2, 1.4, 1.0, 0.9, 7.4, 5.1, 2.2, 1.4, 1.0, 0.9])
+    fwhm  = np.array([7.4, 5.1, 2.2, 1.4, 1.0, 0.9, 7.4, 5.1, 2.2, 1.4, 1.0, 0.9])
     nlevp = np.array([71, 36, 8, 10, 22, 54, 71, 36, 8, 10, 22, 54])
 
     def __init__(
