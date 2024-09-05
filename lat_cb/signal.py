@@ -394,18 +394,17 @@ class CMB:
         if os.path.isfile(fname):
             return hp.read_map(fname, field=[0, 1])  # type: ignore
         else:
-            spectra = self.get_lensed_spectra(
+            spectra = self.get_cb_lensed_spectra(
+                beta=self.beta,
                 dl=False,
             )
             T, E, B = hp.synalm(
-                [spectra["tt"], spectra["ee"], spectra["bb"], spectra["te"]],
+                [spectra["tt"], spectra["ee"], spectra["bb"], spectra["te"], spectra["eb"], spectra["tb"]],
                 lmax=self.lmax,
                 new=True,
             )
             del T
-            Elm = (E * np.cos(inrad(2 * self.beta))) - (B * np.sin(inrad(2 * self.beta)))  # type: ignore
-            Blm = (E * np.sin(inrad(2 * self.beta))) + (B * np.cos(inrad(2 * self.beta)))  # type: ignore
-            QU = hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.lmax)
+            QU = hp.alm2map_spin([E, B], self.nside, 2, lmax=self.lmax)
             hp.write_map(fname, QU, dtype=np.float64)
             return QU
 
