@@ -771,9 +771,7 @@ class LATsky:
             "280b",
         ]
     )
-    fwhm  = np.array([7.4, 5.1, 2.2, 1.4, 1.0, 0.9, 7.4, 5.1, 2.2, 1.4, 1.0, 0.9])
-    # esto esta completamente desacoplado del ruido
-    nlevp = np.array([71, 36, 8, 10, 22, 54, 71, 36, 8, 10, 22, 54])
+    fwhm  = np.array([7.4, 5.1, 2.2, 1.4, 1.0, 0.9, 7.4, 5.1, 2.2, 1.4, 1.0, 0.9]) # arcmin
 
     def __init__(
         self,
@@ -806,9 +804,8 @@ class LATsky:
         self.libdir = os.path.join(libdir, "LAT" + fldname)
         os.makedirs(self.libdir, exist_ok=True)
 
-
         configs = {
-            self.freqs[i]: {"fwhm": self.fwhm[i], "nlevp": self.nlevp[i]} for i in range(len(self.freqs))
+            self.freqs[i]: {"fwhm": self.fwhm[i]} for i in range(len(self.freqs))
         }
         self.config     = configs
         self.nside      = nside
