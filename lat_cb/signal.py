@@ -43,6 +43,7 @@ def SO_LAT_Nell_v3_0_0(
     sensitivity_mode: int,
     f_sky: float,
     ell_max: int,
+    atm_noise: bool
 ) -> Dict[str, np.ndarray]:
     """
     Calculate the noise power spectrum for the SO LAT experiment.
@@ -52,6 +53,7 @@ def SO_LAT_Nell_v3_0_0(
                             Should be either 1 or 2.
     f_sky (float): The fraction of the sky observed by the experiment.
                      Should be in the range (0, 1].
+    atm_noise (bool): Return white + 1/f noise if True or white noise only if alse
     ell_max (int): The maximum multipole value for the noise power spectrum.
 
     Returns:
@@ -80,21 +82,17 @@ def SO_LAT_Nell_v3_0_0(
     f_knee_pol_LA_280 = 700.0
     alpha_pol = -1.4
 
-    ####################################################################
     ## calculate the survey area and time
     survey_time = 5.0  # years
     t = survey_time * 365.25 * 24.0 * 3600.0  ## convert years to seconds
     t = t * 0.2  ## retention after observing efficiency and cuts
-    t = t * 0.85  ## a kludge for the noise non-uniformity of the map edges
+    # PDP: I think we should remove this when providing a hitmap separately
+    #t = t * 0.85  ## a kludge for the noise non-uniformity of the map edges
     A_SR = 4.0 * np.pi * f_sky  ## sky areas in steradians
-    # A_deg = A_SR * (180 / np.pi) ** 2  ## sky area in square degrees
-    # print("sky area: ", A_deg, "degrees^2")
 
-    ####################################################################
     ## make the ell array for the output noise curves
     ell = np.arange(2, ell_max, 1)
 
-    ####################################################################
     ###   CALCULATE N(ell) for Temperature
     ## calculate the experimental weight
     W_T_27  = S_LA_27[sensitivity_mode] / np.sqrt(t)
@@ -104,66 +102,85 @@ def SO_LAT_Nell_v3_0_0(
     W_T_225 = S_LA_225[sensitivity_mode] / np.sqrt(t)
     W_T_280 = S_LA_280[sensitivity_mode] / np.sqrt(t)
 
-    ####################################################################
-    ###   CALCULATE N(ell) for Polarization
-    ## calculate the atmospheric contribution for P
-    AN_P_27  = (ell / f_knee_pol_LA_27) ** alpha_pol + 1.0
-    AN_P_39  = (ell / f_knee_pol_LA_39) ** alpha_pol + 1.0
-    AN_P_93  = (ell / f_knee_pol_LA_93) ** alpha_pol + 1.0
-    AN_P_145 = (ell / f_knee_pol_LA_145) ** alpha_pol + 1.0
-    AN_P_225 = (ell / f_knee_pol_LA_225) ** alpha_pol + 1.0
-    AN_P_280 = (ell / f_knee_pol_LA_280) ** alpha_pol + 1.0
+    if not atm_noise:
+        ###   CALCULATE N(ell) for Polarization
+        NW_P_27   = (W_T_27  * np.sqrt(2))**2.* A_SR 
+        NW_P_39   = (W_T_39  * np.sqrt(2))**2.* A_SR 
+        NW_P_93   = (W_T_93  * np.sqrt(2))**2.* A_SR 
+        NW_P_145  = (W_T_145 * np.sqrt(2))**2.* A_SR 
+        NW_P_225  = (W_T_225 * np.sqrt(2))**2.* A_SR 
+        NW_P_280  = (W_T_280 * np.sqrt(2))**2.* A_SR 
+        
+        N_ell_P = {
+            "ell": ell,
+            "27": np.repeat(NW_P_27, len(ell)),
+            "39": np.repeat(NW_P_39, len(ell)),
+            "93": np.repeat(NW_P_93, len(ell)),
+            "145": np.repeat(NW_P_145, len(ell)),
+            "225": np.repeat(NW_P_225, len(ell)),
+            "280": np.repeat(NW_P_280, len(ell)),
+        }
+    else:
+        ###   CALCULATE N(ell) for Polarization
+        ## calculate the atmospheric contribution for P
+        AN_P_27  = (ell / f_knee_pol_LA_27) ** alpha_pol + 1.0
+        AN_P_39  = (ell / f_knee_pol_LA_39) ** alpha_pol + 1.0
+        AN_P_93  = (ell / f_knee_pol_LA_93) ** alpha_pol + 1.0
+        AN_P_145 = (ell / f_knee_pol_LA_145) ** alpha_pol + 1.0
+        AN_P_225 = (ell / f_knee_pol_LA_225) ** alpha_pol + 1.0
+        AN_P_280 = (ell / f_knee_pol_LA_280) ** alpha_pol + 1.0
+    
+        ## calculate N(ell)
+        N_ell_P_27  = ( W_T_27 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_27
+        N_ell_P_39  = ( W_T_39 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_39
+        N_ell_P_93  = ( W_T_93 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_93
+        N_ell_P_145 = (W_T_145 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_145
+        N_ell_P_225 = (W_T_225 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_225
+        N_ell_P_280 = (W_T_280 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_280
+    
+        # include cross-correlations due to atmospheric noise
+        # use correlation coefficient of r=0.9 within each dichroic pair and 0 otherwise
+        r_atm = 0.9
+        # different approach than for T -- need to subtract off the white noise part to get the purely atmospheric part
+        # see Sec. 2.2 of the SO science goals paper
+        N_ell_P_27_atm = (
+            (W_T_27 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_27) ** alpha_pol
+        )
+        N_ell_P_39_atm = (
+            (W_T_39 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_39) ** alpha_pol
+        )
+        N_ell_P_93_atm = (
+            (W_T_93 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_93) ** alpha_pol
+        )
+        N_ell_P_145_atm = (
+            (W_T_145 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_145) ** alpha_pol
+        )
+        N_ell_P_225_atm = (
+            (W_T_225 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_225) ** alpha_pol
+        )
+        N_ell_P_280_atm = (
+            (W_T_280 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_280) ** alpha_pol
+        )
+        N_ell_P_27x39   = r_atm * np.sqrt( N_ell_P_27_atm * N_ell_P_39_atm)
+        N_ell_P_93x145  = r_atm * np.sqrt( N_ell_P_93_atm * N_ell_P_145_atm)
+        N_ell_P_225x280 = r_atm * np.sqrt(N_ell_P_225_atm * N_ell_P_280_atm)
+    
+        ## make a dictionary of noise curves for P
+        N_ell_P = {
+            "ell": ell,
+            "27": N_ell_P_27,
+            "39": N_ell_P_39,
+            "27x39": N_ell_P_27x39,
+            "93": N_ell_P_93,
+            "145": N_ell_P_145,
+            "93x145": N_ell_P_93x145,
+            "225": N_ell_P_225,
+            "280": N_ell_P_280,
+            "225x280": N_ell_P_225x280,
+        }
 
-    ## calculate N(ell)
-    N_ell_P_27  = ( W_T_27 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_27
-    N_ell_P_39  = ( W_T_39 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_39
-    N_ell_P_93  = ( W_T_93 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_93
-    N_ell_P_145 = (W_T_145 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_145
-    N_ell_P_225 = (W_T_225 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_225
-    N_ell_P_280 = (W_T_280 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_280
+    return N_ell_P
 
-    # include cross-correlations due to atmospheric noise
-    # use correlation coefficient of r=0.9 within each dichroic pair and 0 otherwise
-    r_atm = 0.9
-    # different approach than for T -- need to subtract off the white noise part to get the purely atmospheric part
-    # see Sec. 2.2 of the SO science goals paper
-    N_ell_P_27_atm = (
-        (W_T_27 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_27) ** alpha_pol
-    )
-    N_ell_P_39_atm = (
-        (W_T_39 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_39) ** alpha_pol
-    )
-    N_ell_P_93_atm = (
-        (W_T_93 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_93) ** alpha_pol
-    )
-    N_ell_P_145_atm = (
-        (W_T_145 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_145) ** alpha_pol
-    )
-    N_ell_P_225_atm = (
-        (W_T_225 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_225) ** alpha_pol
-    )
-    N_ell_P_280_atm = (
-        (W_T_280 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_280) ** alpha_pol
-    )
-    N_ell_P_27x39   = r_atm * np.sqrt( N_ell_P_27_atm * N_ell_P_39_atm)
-    N_ell_P_93x145  = r_atm * np.sqrt( N_ell_P_93_atm * N_ell_P_145_atm)
-    N_ell_P_225x280 = r_atm * np.sqrt(N_ell_P_225_atm * N_ell_P_280_atm)
-
-    ## make a dictionary of noise curves for P
-    N_ell_P_LA = {
-        "ell": ell,
-        "27": N_ell_P_27,
-        "39": N_ell_P_39,
-        "27x39": N_ell_P_27x39,
-        "93": N_ell_P_93,
-        "145": N_ell_P_145,
-        "93x145": N_ell_P_93x145,
-        "225": N_ell_P_225,
-        "280": N_ell_P_280,
-        "225x280": N_ell_P_225x280,
-    }
-
-    return N_ell_P_LA
 
 class CMB:
 
@@ -559,7 +576,6 @@ class Foreground:
             return maps[1:].value
 
 class Noise:
-    nlevp = np.array([71, 36, 8, 10, 22, 54, 71, 36, 8, 10, 22, 54])
 
     def __init__(self, nside: int, atm_noise: bool = False, nhits: bool = False):
         """
@@ -573,27 +589,25 @@ class Noise:
         self.lmax             = 3 * nside - 1
         self.sensitivity_mode = 2
         self.atm_noise        = atm_noise
+        self.mask             = Mask(nside=self.nside).get_mask(False)
+        self.fsky             = np.mean(self.mask**2)**2/np.mean(self.mask**4)
+        self.Nell             = SO_LAT_Nell_v3_0_0(self.sensitivity_mode, self.fsky, self.lmax, self.atm_noise)
         if atm_noise:
-            self.fsky = 0.6  # Example value for f_sky; adjust as necessary
-            self.Nell = SO_LAT_Nell_v3_0_0(self.sensitivity_mode, self.fsky, self.lmax)
-            print("Noise Model: Atmospheric noise v3.0.0")
+             print("Noise Model: Atmospheric noise v3.0.0")
         else:
-            print("Noise Model: White noise")
-        
-        self.mask     = Mask(nside=self.nside).get_mask(False)
+             print("Noise Model: White noise v3.0.0")
+
         self.hits_map = Mask(nside=self.nside).get_mask(True)
         self.nhits    = nhits
         self.fac      = self.get_fac()
     
     def get_fac(self):
-        fac = np.sqrt(2)*self.mask
+        # PDP: magic number found empirically
+        # Ask Adri before using it
         if self.nhits:
             print("HITS map: enabled")
-            grt_zero = self.hits_map > 0
-            self.hits_map[grt_zero] /= np.median(self.hits_map[grt_zero])
-            with np.errstate(divide='ignore'):
-                fac[grt_zero] /= np.sqrt(self.hits_map[grt_zero])
-        return fac
+        norm_hits_map = self.hits_map/np.median(self.hits_map)
+        return np.sqrt(norm_hits_map*0.7614)
 
     @property
     def rand_alm(self) -> np.ndarray:
@@ -658,6 +672,24 @@ class Noise:
 
         return L11, L21, L22, L33, L43, L44, L55, L65, L66
 
+
+    def __white_noise__(self, band):
+        n = hp.synfast(np.concatenate((np.zeros(2), self.Nell[band])), self.nside, lmax=self.lmax, pixwin=False)
+        if self.nhits:
+            return n*self.fac
+        else:
+            return n*self.mask
+        
+    def white_noise_maps(self) -> np.ndarray:
+        return np.array([
+                    self.__white_noise__('27'),
+                    self.__white_noise__('39'),
+                    self.__white_noise__('93'),
+                    self.__white_noise__('145'),
+                    self.__white_noise__('225'),
+                    self.__white_noise__('280')])
+
+
     def atm_noise_maps(self) -> np.ndarray:
         """
         Generates atmospheric noise maps using Cholesky decomposition.
@@ -688,7 +720,11 @@ class Noise:
         n_225   = hp.alm2map(nlm_225, self.nside, pixwin=False)
         n_280   = hp.alm2map(nlm_280, self.nside, pixwin=False)
 
-        return np.array([n_27, n_39, n_93, n_145, n_225, n_280])
+        n = np.array([n_27, n_39, n_93, n_145, n_225, n_280])
+        if self.nhits:
+            return n*self.fac
+        else:
+            return n*self.mask
 
     def noiseQU(self) -> np.ndarray:
         """
@@ -698,50 +734,25 @@ class Noise:
         np.ndarray: An array of Q and U noise maps.
         """
         if self.atm_noise:
-            N = self.noiseQUatm()
+            qa = self.atm_noise_maps()
+            ua = self.atm_noise_maps()
+            qb = self.atm_noise_maps()
+            ub = self.atm_noise_maps()
         else:
-            N = self.noiseQUwhite()
-        return N
+            qa = self.white_noise_maps()
+            ua = self.white_noise_maps()
+            qb = self.white_noise_maps()
+            ub = self.white_noise_maps()
 
-    def noiseQUwhite(self) -> np.ndarray:
-        """
-        Generates white noise Q and U polarization maps.
+        N = []
+        for i in range(len(qa)):
+            N.append([qa[i], ua[i]])
+        for i in range(len(qb)):
+            N.append([qb[i], ub[i]])
+        # detector splits
+        return np.array(N)*np.sqrt(2)
 
-        Returns:
-        np.ndarray: An array of white noise Q and U maps.
-        """
-        depth_p = self.nlevp  # Assuming the first six values are used
-        depth_i = depth_p / np.sqrt(2)
-        pix_amin2 = (
-            4.0 * np.pi / float(hp.nside2npix(self.nside)) * (180.0 * 60.0 / np.pi) ** 2
-        )
-        sigma_pix_I = np.sqrt(depth_i**2 / pix_amin2)
-        sigma_pix_P = np.sqrt(depth_p**2 / pix_amin2)
-        npix = hp.nside2npix(self.nside)
-        noise = np.random.randn(len(depth_i), 3, npix)
-        noise[:, 0, :] *= sigma_pix_I[:, None]
-        noise[:, 1, :] *= sigma_pix_P[:, None]
-        noise[:, 2, :] *= sigma_pix_P[:, None]
-        return noise[:, 1:, :] * self.fac
 
-    def noiseQUatm(self) -> np.ndarray:
-        """
-        Generates Q and U polarization maps with atmospheric noise.
-
-        Returns:
-        np.ndarray: An array of Q and U maps with atmospheric noise.
-        """
-        q1 = self.atm_noise_maps()
-        u1 = self.atm_noise_maps()
-        q2 = self.atm_noise_maps()
-        u2 = self.atm_noise_maps()
-
-        qu = []
-        for i in range(len(q1)):
-            qu.append([q1[i], u1[i]])
-        for i in range(len(q2)):
-            qu.append([q2[i], u2[i]])
-        return np.array(qu) * self.fac
 
 class LATsky:
     freqs = np.array(
@@ -761,6 +772,7 @@ class LATsky:
         ]
     )
     fwhm  = np.array([7.4, 5.1, 2.2, 1.4, 1.0, 0.9, 7.4, 5.1, 2.2, 1.4, 1.0, 0.9])
+    # esto esta completamente desacoplado del ruido
     nlevp = np.array([71, 36, 8, 10, 22, 54, 71, 36, 8, 10, 22, 54])
 
     def __init__(
@@ -882,7 +894,7 @@ class LATsky:
         """
         fwhm  = self.config[band]["fwhm"]
         alpha = self.config[band]["alpha"]
-        beta = self.cmb.beta
+        beta  = self.cmb.beta
         return os.path.join(
             self.libdir,
             f"obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{fwhm}_{idx:03d}.fits",
@@ -934,10 +946,10 @@ class Mask:
         nside (int): HEALPix resolution parameter.
         libdir (Optional[str], optional): Directory where the mask may be saved or loaded from. Defaults to None.
         """
-        self.nside = nside
-        self.libdir = libdir
+        self.nside     = nside
+        self.libdir    = libdir
         self.mask_save = libdir is not None
-        self.fsky = np.mean(self.get_mask(nhits=False))
+        self.fsky      = np.mean(self.get_mask(nhits=False)**2)**2/np.mean(self.get_mask(nhits=False)**4)
 
     def get_mask(self, nhits: bool = False) -> np.ndarray:
         """
@@ -955,7 +967,8 @@ class Mask:
         ivar = hp.read_map(mask)
 
         if self.nside != hp.get_nside(ivar):
-            ivar = hp.ud_grade(ivar, self.nside)
+            # PDP: power=-2 is supposed to be better for hit maps
+            ivar = hp.ud_grade(ivar, self.nside, power=-2)
 
         if nhits:
             return ivar
