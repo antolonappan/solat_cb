@@ -914,7 +914,7 @@ class LATsky:
         sky   = np.array(signal) + noise
         for i in tqdm(range(len(bands)), desc="Saving Observed QUs", unit="band"):
             fname = self.obsQUfname(idx, bands[i])
-            hp.write_map(fname, sky[i]*self.mask, dtype=np.float64)
+            hp.write_map(fname, sky[i]*self.mask, dtype=np.float64, overwrite=True)
 
     def obsQU(self, idx: int, band: str) -> np.ndarray:
         """

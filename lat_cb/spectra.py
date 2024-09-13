@@ -300,7 +300,7 @@ class Spectra:
         if os.path.isfile(fname):
             return np.load(fname)
         else:
-            cl = np.zeros((self.freqs, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
+            cl = np.zeros((self.Nfreq, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
             #TODO PDP: should we set masked_on_input=True? because they are
             if fg=='dust':
                 fp_i = nmt.NmtField(
