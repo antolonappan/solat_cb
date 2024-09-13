@@ -10,12 +10,14 @@ from lat_cb import mpi
 from typing import Dict, Optional, Any, Union, List, Tuple
 
 
-# more realistic mask
-#TODO I feel like cls are calculated in series not parallel, each helper should be sent to
-# a different process
+#TODO PDP: should increase the realism of the mask by adding Galatic and point source
+# mask from the published Planck analyses
+#TODO PDP: cls are calculated in series not parallel
+# each helper should be sent to a different process
 
 class Spectra:
-    def __init__(self, libdir: str, lat_lib: LATsky, aposcale: float = 1.0):
+    def __init__(self, libdir: str, lat_lib: LATsky, 
+                 aposcale: float = 1.0, template_bandpass: bool = False):
         """
         Initializes the Spectra class for computing and handling power spectra of observed CMB maps.
 
@@ -23,9 +25,13 @@ class Spectra:
         libdir (str): Directory where the spectra will be stored.
         lat_lib (LATsky): An instance of the LATsky class containing LAT-related configurations.
         aposcale (float, optional): Apodisation scale in degrees. Defaults to 1 deg
+        template_bandpass (bool, optional): Apply bandpass integration to the foreground template. Defaults to False.
         """
         self.lat   = lat_lib
         self.nside = self.lat.nside
+        #TODO PDP: I feel like these files should be under the 'LAT_white_noise_2splits'
+        # directory because they are the cls of those particular simulations
+        # It will be easy to loose/mix them if they are outside
         fldname    = "_atm_noise" if self.lat.atm_noise else "white_noise"
         fldname   += "_nhits" if self.lat.nhits else ""
         libdiri    = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}" + fldname)
@@ -33,14 +39,12 @@ class Spectra:
         self.__set_dir__(libdiri, comdir)
         
         # PDP: we won't need all these multipoles but I'll leave it like this for now
-        self.lmax  = 3 * self.lat.nside - 1
+        self.lmax     = 3 * self.lat.nside - 1
         
-        #TODO why set the bandpass of the foreground template to False all the time?
-        # I feel like this should be an argument somewhere
-        self.bandpass = self.lat.bandpass
-        self.fg       = Foreground(libdir, self.nside, self.lat.dust_model, self.lat.sync_model, False)
+        self.temp_bp  = template_bandpass
+        self.fg       = Foreground(libdir, self.nside, self.lat.dust_model, self.lat.sync_model, self.temp_bp)
         
-        #TODO I might need to apply some binning
+        #TODO PDP: We might need some binning, let me test it
         self.binInfo = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
         self.Nell    = self.binInfo.get_n_bands()
         
@@ -168,8 +172,7 @@ class Spectra:
         """
         if fg not in ['dust', 'sync']:
             raise ValueError('Unknown foreground')
-        #TODO we should give the option of being bandpass integrated or not
-        fname = os.path.join(self.fg.libdir, f"{fg}QU_N{self.nside}_{nu}_wbeam.fits")
+        fname = os.path.join(self.fg.libdir, f"{fg}QU_N{self.nside}_{nu}_template{'_bp' if self.temp_bp else ''}.fits")
         if os.path.isfile(fname):
             m = hp.read_map(fname, field=(0, 1))
             return m[0], m[1]
@@ -220,7 +223,7 @@ class Spectra:
         """
         fname = os.path.join(
             self.oxo_dir,
-            f"obs_x_obs_{self.bands[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy",
+            f"obs_x_obs_{self.bands[ii]}{'_obsBP' if self.lat.bandpass else ''}_{idx:03d}.npy",
         )
         if os.path.isfile(fname):
             return np.load(fname)
@@ -294,7 +297,7 @@ class Spectra:
         elif fg=='sync':
             base_dir = self.sxo_dir
         fname = os.path.join(base_dir,
-            f"{fg}_x_obs_{self.freqs[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy",
+            f"{fg}_x_obs_{self.freqs[ii]}{'_obsBP' if self.lat.bandpass else ''}{'_tempBP' if self.temp_bp else ''}_{idx:03d}.npy",
         )
         
         if os.path.isfile(fname):
@@ -388,7 +391,7 @@ class Spectra:
         elif fg=='sync':
             base_dir = self.sxs_dir
         fname = os.path.join(base_dir,
-            f"{fg}_x_{fg}_{self.bands[ii]}.npy",
+            f"{fg}_x_{fg}_{self.freqs[ii]}{'_tempBP' if self.temp_bp else ''}.npy",
         )
         
         if os.path.isfile(fname):
@@ -484,7 +487,7 @@ class Spectra:
         Returns:
         np.ndarray: Power spectra for the synchrotron x dust fields.
         """
-        fname = os.path.join(self.sxd_dir, f"sync_x_dust_{self.bands[ii]}.npy")
+        fname = os.path.join(self.sxd_dir, f"sync_x_dust_{self.freqs[ii]}{'_tempBP' if self.temp_bp else ''}.npy")
         if os.path.isfile(fname):
             return np.load(fname)
         else:
