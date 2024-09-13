@@ -875,7 +875,7 @@ class LATsky:
         bl     = hp.gauss_beam(inrad(fwhm / 60), lmax=self.cmb.lmax, pol=True)
         pwf    = np.array(hp.pixwin(self.nside, pol=True, lmax=self.cmb.lmax))
         hp.almxfl(Elm, bl[:,1]*pwf[1,:], inplace=True)
-        hp.almxfl(Blm, bl[:,1]*pwf[1,:], inplace=True)
+        hp.almxfl(Blm, bl[:,2]*pwf[1,:], inplace=True)
         return hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.cmb.lmax)
 
 
