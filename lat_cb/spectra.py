@@ -10,27 +10,28 @@ from lat_cb import mpi
 from typing import Dict, Optional, Any, Union, List, Tuple
 
 
-#TODO apodise mask
+# more realistic mask
 #TODO I feel like cls are calculated in series not parallel, each helper should be sent to
 # a different process
 
 class Spectra:
-    def __init__(self, libdir: str, lat_lib: LATsky):
+    def __init__(self, libdir: str, lat_lib: LATsky, aposcale: float = 1.0):
         """
         Initializes the Spectra class for computing and handling power spectra of observed CMB maps.
 
         Parameters:
         libdir (str): Directory where the spectra will be stored.
         lat_lib (LATsky): An instance of the LATsky class containing LAT-related configurations.
+        aposcale (float, optional): Apodisation scale in degrees. Defaults to 1 deg
         """
         self.lat   = lat_lib
+        self.nside = self.lat.nside
         fldname    = "_atm_noise" if self.lat.atm_noise else "white_noise"
         fldname   += "_nhits" if self.lat.nhits else ""
-        libdiri    = os.path.join(libdir, f"spectra_{self.nside}" + fldname)
-        comdir     = os.path.join(libdir, f"spectra_{self.nside}" + "_common")
+        libdiri    = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}" + fldname)
+        comdir     = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}" + "_common")
         self.__set_dir__(libdiri, comdir)
         
-        self.nside     = self.lat.nside
         # PDP: we won't need all these multipoles but I'll leave it like this for now
         self.lmax  = 3 * self.lat.nside - 1
         
@@ -43,14 +44,15 @@ class Spectra:
         self.binInfo = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
         self.Nell    = self.binInfo.get_n_bands()
         
-        #TODO this mask need to be apodised 
-        self.mask    = self.lat.mask
-        #TODO fsky need to be calculated for the apodised mask
-        self.fsky = np.average(self.mask)
+        self.aposcale = aposcale
+        self.mask     = self.get_apodised_mask(self.aposcale)
+        self.fsky     = np.mean(self.mask**2)**2/np.mean(self.mask**4)
         
         # PDP: saving the spectra in this order makes the indexing of the mle easier
+        self.freqs = LATsky.freqs
+        self.Nfreq = len(self.freqs)
         self.bands = []
-        for nu in LATsky.freqs:
+        for nu in self.freqs:
             for split in range(self.lat.nsplits):
                 self.bands.append(f'{nu}-{split+1}')
         self.Nbands = len(self.bands)
@@ -62,7 +64,22 @@ class Spectra:
         self.workspace = nmt.NmtWorkspace()
         self.get_coupling_matrix()
         
-
+        
+    def get_apodised_mask(self, aposcale: float = 1.0):
+        fname = os.path.join(
+            self.wdir,
+            f"mask_N{self.nside}_aposcale{str(self.aposcale).replace('.','p')}.fits",
+        )
+        if not os.path.isfile(fname):
+            print("Apodising mask")
+            mask = nmt.mask_apodization(self.lat.mask, aposcale, apotype="C2")
+            print(f"Apodised mask saved to {fname}")
+            hp.write_map(fname, mask, dtype=float)
+            return mask
+        else:
+            print(f"Reading apodised mask from {fname}")
+            return hp.read_map(fname, dtype=float)
+        
     def get_coupling_matrix(self) -> None:
         """
         Computes or loads the coupling matrix for power spectrum estimation.
@@ -70,7 +87,7 @@ class Spectra:
         fsky  = np.round(self.fsky, 2)
         fname = os.path.join(
             self.wdir,
-            f"coupling_matrix_Nside{self.nside}_fsky_{str(fsky).replace('.','p')}.fits",
+            f"coupling_matrix_N{self.nside}_fsky{str(fsky).replace('.','p')}_aposcale{str(self.aposcale).replace('.','p')}.fits",
         )
         if not os.path.isfile(fname):
             print("Computing coupling Matrix")
@@ -139,12 +156,12 @@ class Spectra:
             maps[i] = self.lat.obsQU(idx, band)
         self.obs_qu_maps = maps
 
-    def __get_fg_QUmap__(self, band: str, fg: str) -> Tuple[np.ndarray, np.ndarray]:
+    def __get_fg_QUmap__(self, nu: str, fg: str) -> Tuple[np.ndarray, np.ndarray]:
         """
         Retrieves or generates the Q and U Stokes parameter maps for dust emission for a specific frequency band.
 
         Parameters:
-        band (str): The frequency band identifier.
+        band (str): The frequency identifier.
         fg (str): Foreground type, either 'dust' or 'sync'
         Returns:
         Tuple[np.ndarray, np.ndarray]: Q and U maps for dust emission.
@@ -152,17 +169,17 @@ class Spectra:
         if fg not in ['dust', 'sync']:
             raise ValueError('Unknown foreground')
         #TODO we should give the option of being bandpass integrated or not
-        fname = os.path.join(self.fg.libdir, f"{fg}QU_N{self.nside}_{band}_wbeam.fits")
+        fname = os.path.join(self.fg.libdir, f"{fg}QU_N{self.nside}_{nu}_wbeam.fits")
         if os.path.isfile(fname):
             m = hp.read_map(fname, field=(0, 1))
             return m[0], m[1]
         else:
             if fg=='dust':
-                m = self.fg.dustQU(band)
+                m = self.fg.dustQU(nu)
             elif fg=='sync':
-                m = self.fg.syncQU(band)
+                m = self.fg.syncQU(nu)
             E, B   = hp.map2alm_spin(m, 2, lmax=self.lmax)
-            fwhm   = self.lat.config[band]["fwhm"]
+            fwhm   = self.lat.fwhm[self.freqs==nu][0]
             bl     = hp.gauss_beam(np.radians(fwhm / 60), pol=True, lmax=self.lmax)
             pwf    = np.array(hp.pixwin(self.nside, pol=True, lmax=self.lmax))
             hp.almxfl(E, bl[:,1]*pwf[1,:], inplace=True)
@@ -175,18 +192,18 @@ class Spectra:
         """
         Loads dust Q and U Stokes parameter maps for all frequency bands.
         """
-        maps = np.zeros((self.Nbands, 2, hp.nside2npix(self.nside)), dtype=np.float64)
-        for i, band in enumerate(self.bands):
-            maps[i] = self.__get_fg_QUmap__(band, 'dust')
+        maps = np.zeros((self.Nfreq, 2, hp.nside2npix(self.nside)), dtype=np.float64)
+        for i, nu in enumerate(self.freqs):
+            maps[i] = self.__get_fg_QUmap__(nu, 'dust')
         self.dust_qu_maps = maps
 
     def load_syncQUmaps(self) -> None:
         """
         Loads synchrotron Q and U Stokes parameter maps for all frequency bands.
         """
-        maps = np.zeros((self.Nbands, 2, hp.nside2npix(self.nside)), dtype=np.float64)
-        for i, band in enumerate(self.bands):
-            maps[i] = self.__get_fg_QUmap__(band, 'sync')
+        maps = np.zeros((self.Nfreq, 2, hp.nside2npix(self.nside)), dtype=np.float64)
+        for i, nu in enumerate(self.freqs):
+            maps[i] = self.__get_fg_QUmap__(nu, 'sync')
         self.sync_qu_maps = maps
 
     def __obs_x_obs_helper__(self, ii: int, idx: int) -> np.ndarray:
@@ -277,13 +294,13 @@ class Spectra:
         elif fg=='sync':
             base_dir = self.sxo_dir
         fname = os.path.join(base_dir,
-            f"{fg}_x_obs_{self.bands[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy",
+            f"{fg}_x_obs_{self.freqs[ii]}{'_bp' if self.bandpass else ''}_{idx:03d}.npy",
         )
         
         if os.path.isfile(fname):
             return np.load(fname)
         else:
-            cl = np.zeros((self.Nbands, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
+            cl = np.zeros((self.freqs, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
             #TODO PDP: should we set masked_on_input=True? because they are
             if fg=='dust':
                 fp_i = nmt.NmtField(
@@ -321,9 +338,9 @@ class Spectra:
         Returns:
         np.ndarray: Combined power spectra for the dust x observed fields across all bands.
         """
-        cl = np.zeros((self.Nbands, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
+        cl = np.zeros((self.Nfreq, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
         for ii in tqdm(
-            range(self.Nbands),
+            range(self.Nfreq),
             desc="dust x obs spectra",
             unit="band",
             disable=not progress,
@@ -342,9 +359,9 @@ class Spectra:
         Returns:
         np.ndarray: Combined power spectra for the synchrotron x observed fields across all bands.
         """
-        cl = np.zeros((self.Nbands, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
+        cl = np.zeros((self.Nfreq, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
         for ii in tqdm(
-            range(self.Nbands),
+            range(self.Nfreq),
             desc="sync x obs spectra",
             unit="band",
             disable=not progress,
@@ -378,7 +395,7 @@ class Spectra:
             return np.load(fname)
         else:
             cl = np.zeros(
-                (self.Nbands, self.Nbands, 3, self.Nell + 2), dtype=np.float64
+                (self.Nfreq, self.Nfreq, 3, self.Nell + 2), dtype=np.float64
             )
             #TODO PDP: should we set masked_on_input=True? because they are
             if fg=='dust':
@@ -390,7 +407,7 @@ class Spectra:
                     self.mask, self.sync_qu_maps[ii], lmax=self.lmax, purify_b=False
                 )
                 
-            for jj in range(ii, self.Nbands, 1):
+            for jj in range(ii, self.Nfreq, 1):
                 #TODO PDP: should we set masked_on_input=True? because they are
                 if fg=='dust':
                     fp_j = nmt.NmtField(
@@ -426,9 +443,9 @@ class Spectra:
         Returns:
         np.ndarray: Combined power spectra for the synchrotron x synchrotron fields across all bands.
         """
-        cl = np.zeros((self.Nbands, self.Nbands, 3, self.Nell + 2), dtype=np.float64)
+        cl = np.zeros((self.Nfreq, self.Nfreq, 3, self.Nell + 2), dtype=np.float64)
         for ii in tqdm(
-            range(self.Nbands),
+            range(self.Nfreq),
             desc="sync x sync spectra",
             unit="band",
             disable=not progress,
@@ -446,9 +463,9 @@ class Spectra:
         Returns:
         np.ndarray: Combined power spectra for the dust x dust fields across all bands.
         """
-        cl = np.zeros((self.Nbands, self.Nbands, 3, self.Nell + 2), dtype=np.float64)
+        cl = np.zeros((self.Nfreq, self.Nfreq, 3, self.Nell + 2), dtype=np.float64)
         for ii in tqdm(
-            range(self.Nbands),
+            range(self.Nfreq),
             desc="dust x dust spectra",
             unit="band",
             disable=not progress,
@@ -472,13 +489,13 @@ class Spectra:
             return np.load(fname)
         else:
             cl = np.zeros(
-                (self.Nbands, self.Nbands, 4, self.Nell + 2), dtype=np.float64
+                (self.Nfreq, self.Nfreq, 4, self.Nell + 2), dtype=np.float64
             )
             #TODO PDP: should we set masked_on_input=True? because they are
             fp_i = nmt.NmtField(
                 self.mask, self.sync_qu_maps[ii, :, :], lmax=self.lmax, purify_b=False
             )
-            for jj in range(0, self.Nbands, 1):
+            for jj in range(0, self.Nfreq, 1):
                 #TODO PDP: should we set masked_on_input=True? because they are
                 fp_j = nmt.NmtField(
                     self.mask, self.dust_qu_maps[jj, :, :], lmax=self.lmax, purify_b=False,
@@ -493,7 +510,7 @@ class Spectra:
 
                 del fp_j
             np.save(fname, cl)
-            return cl
+            return cl 
 
     def sync_x_dust(self, progress: bool = False) -> np.ndarray:
         """
@@ -505,9 +522,9 @@ class Spectra:
         Returns:
         np.ndarray: Combined power spectra for the synchrotron x dust fields across all bands.
         """
-        cl = np.zeros((self.Nbands, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
+        cl = np.zeros((self.Nfreq, self.Nfreq, 4, self.Nell + 2), dtype=np.float64)
         for ii in tqdm(
-            range(self.Nbands),
+            range(self.Nfreq),
             desc="sync x dust spectra",
             unit="band",
             disable=not progress,
