@@ -39,6 +39,9 @@ def cli(cl: np.ndarray) -> np.ndarray:
     ret[np.where(cl > 0)] = 1.0 / cl[np.where(cl > 0)]
     return ret
 
+
+# PDP: quite outdated model, we should consider at least updating it to v3.1.2
+# at some point
 def SO_LAT_Nell_v3_0_0(
     sensitivity_mode: int,
     f_sky: float,
@@ -87,7 +90,7 @@ def SO_LAT_Nell_v3_0_0(
     t = survey_time * 365.25 * 24.0 * 3600.0  ## convert years to seconds
     t = t * 0.2  ## retention after observing efficiency and cuts
     # PDP: I think we should remove this when providing a hitmap separately
-    #t = t * 0.85  ## a kludge for the noise non-uniformity of the map edges
+    t = t * 0.85  ## a kludge for the noise non-uniformity of the map edges
     A_SR = 4.0 * np.pi * f_sky  ## sky areas in steradians
 
     ## make the ell array for the output noise curves
@@ -495,18 +498,16 @@ class Foreground:
         self.bandpass = bandpass
         self.bp_profile = BandpassInt() if bandpass else None
 
-    def dustQU(self, band: Union[str, int]) -> np.ndarray:
+    def dustQU(self, band: str) -> np.ndarray:
         """
         Generates or retrieves the Q and U Stokes parameters for dust emission at a given frequency band.
 
         Parameters:
-        band (Union[str, int]): The frequency band. Can be an integer or a string (e.g., '93GHz').
+        band (str): The frequency band.
 
         Returns:
         np.ndarray: A NumPy array containing the Q and U maps.
         """
-        if isinstance(band, (str, np.str_)):
-            band = int(band[:-1])
         name = (
             f"dustQU_N{self.nside}_f{band}.fits"
             if not self.bandpass
@@ -525,9 +526,11 @@ class Foreground:
                 nu = nu * u.GHz
                 maps = sky.get_emission(nu, weights)
             else:
-                maps = sky.get_emission(band * u.GHz)
+                maps = sky.get_emission(int(band) * u.GHz)
 
-            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(band * u.GHz))
+            #TODO PDP: Shouldn't we do this for each frequency in the bandpass
+            # integration? Unit conversion is also frequency specific
+            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz))
 
             if mpi.rank == 0:
                 hp.write_map(fname, maps[1:], dtype=np.float64)
@@ -535,18 +538,16 @@ class Foreground:
 
             return maps[1:].value
 
-    def syncQU(self, band: Union[str, int]) -> np.ndarray:
+    def syncQU(self, band: str) -> np.ndarray:
         """
         Generates or retrieves the Q and U Stokes parameters for synchrotron emission at a given frequency band.
 
         Parameters:
-        band (Union[str, int]): The frequency band. Can be an integer or a string (e.g., '93GHz').
+        band (str): The frequency band.
 
         Returns:
         np.ndarray: A NumPy array containing the Q and U maps.
         """
-        if isinstance(band, (str, np.str_)):
-            band = int(band[:-1])
         name = (
             f"syncQU_N{self.nside}_f{band}.fits"
             if not self.bandpass
@@ -565,9 +566,11 @@ class Foreground:
                 nu = nu * u.GHz
                 maps = sky.get_emission(nu, weights)
             else:
-                maps = sky.get_emission(band * u.GHz)
+                maps = sky.get_emission(int(band) * u.GHz)
 
-            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(band * u.GHz))
+            #TODO PDP: Shouldn't we do this for each frequency in the bandpass
+            # integration? Unit conversion is also frequency specific
+            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz))
 
             if mpi.rank == 0:
                 hp.write_map(fname, maps[1:], dtype=np.float64)
@@ -577,18 +580,21 @@ class Foreground:
 
 class Noise:
 
-    def __init__(self, nside: int, atm_noise: bool = False, nhits: bool = False):
+    def __init__(self, nside: int, atm_noise: bool = False, nhits: bool = False, nsplits: int = 2):
         """
         Initializes the Noise class for generating noise maps with or without atmospheric noise.
 
         Parameters:
         nside (int): HEALPix resolution parameter.
         atm_noise (bool, optional): If True, includes atmospheric noise. Defaults to False.
+        nhits (bool, optional): If True, includes hit count map. Defaults to False.
+        nsplits (int, optional): Number of data splits to consider. Defaults to 2.
         """
         self.nside            = nside
         self.lmax             = 3 * nside - 1
         self.sensitivity_mode = 2
         self.atm_noise        = atm_noise
+        self.nsplits          = nsplits
         self.mask             = Mask(nside=self.nside).get_mask(False)
         self.fsky             = np.mean(self.mask**2)**2/np.mean(self.mask**4)
         self.Nell             = SO_LAT_Nell_v3_0_0(self.sensitivity_mode, self.fsky, self.lmax, self.atm_noise)
@@ -598,16 +604,19 @@ class Noise:
              print("Noise Model: White noise v3.0.0")
 
         self.hits_map = Mask(nside=self.nside).get_mask(True)
-        self.nhits    = nhits
+        self.nhits    = False
+        print("HITS map option disabled for now")
         self.fac      = self.get_fac()
     
     def get_fac(self):
-        # PDP: magic number found empirically
-        # Ask Adri before using it
         if self.nhits:
             print("HITS map: enabled")
-        norm_hits_map = self.hits_map/np.median(self.hits_map)
-        return np.sqrt(norm_hits_map*0.7614)
+            # PDP: magic number found empirically to reproduce Nell from Anton's variance map
+            # Could be an order 0 approximation but Adri doesn't like it
+            norm_hits_map = self.hits_map/np.median(self.hits_map)
+            return np.sqrt(norm_hits_map*0.7614)
+        else:
+            return self.mask
 
     @property
     def rand_alm(self) -> np.ndarray:
@@ -675,12 +684,10 @@ class Noise:
 
     def __white_noise__(self, band):
         n = hp.synfast(np.concatenate((np.zeros(2), self.Nell[band])), self.nside, lmax=self.lmax, pixwin=False)
-        if self.nhits:
-            return n*self.fac
-        else:
-            return n*self.mask
+        return n*self.fac
         
-    def white_noise_maps(self) -> np.ndarray:
+    
+    def white_noise_maps(self) -> np.ndarray: 
         return np.array([
                     self.__white_noise__('27'),
                     self.__white_noise__('39'),
@@ -721,10 +728,7 @@ class Noise:
         n_280   = hp.alm2map(nlm_280, self.nside, pixwin=False)
 
         n = np.array([n_27, n_39, n_93, n_145, n_225, n_280])
-        if self.nhits:
-            return n*self.fac
-        else:
-            return n*self.mask
+        return n*self.fac
 
     def noiseQU(self) -> np.ndarray:
         """
@@ -733,45 +737,34 @@ class Noise:
         Returns:
         np.ndarray: An array of Q and U noise maps.
         """
-        if self.atm_noise:
-            qa = self.atm_noise_maps()
-            ua = self.atm_noise_maps()
-            qb = self.atm_noise_maps()
-            ub = self.atm_noise_maps()
-        else:
-            qa = self.white_noise_maps()
-            ua = self.white_noise_maps()
-            qb = self.white_noise_maps()
-            ub = self.white_noise_maps()
-
         N = []
-        for i in range(len(qa)):
-            N.append([qa[i], ua[i]])
-        for i in range(len(qb)):
-            N.append([qb[i], ub[i]])
-        # detector splits
-        return np.array(N)*np.sqrt(2)
+        for split in range(self.nsplits):
+            if self.atm_noise:
+                q = self.atm_noise_maps()
+                u = self.atm_noise_maps()
+            else:
+                q = self.white_noise_maps()
+                u = self.white_noise_maps()            
+              
+            for i in range(len(q)):
+                N.append([q[i], u[i]])
+
+        return np.array(N)*np.sqrt(self.nsplits)
 
 
 
 class LATsky:
-    freqs = np.array(
-        [
-            "27a",
-            "39a",
-            "93a",
-            "145a",
-            "225a",
-            "280a",
-            "27b",
-            "39b",
-            "93b",
-            "145b",
-            "225b",
-            "280b",
-        ]
-    )
-    fwhm  = np.array([7.4, 5.1, 2.2, 1.4, 1.0, 0.9, 7.4, 5.1, 2.2, 1.4, 1.0, 0.9]) # arcmin
+    # Understanding data splits as maps made by coadding the data from different
+    # fractions of the total observation time (e.g., first and second half), i.e.:
+    # - white noise is independent between the frequencies within one split, and
+    # between different splits
+    # - 1/f noise can be correlated between frequencies of the same split, but will 
+    # be independent between different splits
+    # - for now, assume detectors are unchanged through observation campaings and
+    # polarisation angles for each frequency are the same across different splits
+
+    freqs = np.array(["27","39","93","145","225","280"])
+    fwhm  = np.array([7.4, 5.1, 2.2, 1.4, 1.0, 0.9]) # arcmin
 
     def __init__(
         self,
@@ -783,6 +776,7 @@ class LATsky:
         alpha: Union[float, List[float]],
         atm_noise: bool = False,
         nhits: bool = False,
+        nsplits: int = 2,
         bandpass: bool = False,
     ):
         """
@@ -797,35 +791,42 @@ class LATsky:
         alpha (Union[float, List[float]]): polarisation angle(s) for frequency bands. If a list, should match the number of frequency bands.
         atm_noise (bool, optional): If True, includes atmospheric noise. Defaults to False.
         nhits (bool, optional): If True, includes hit count map. Defaults to False.
+        nsplits (int, optional): Number of data splits to consider. Defaults to 2.
         bandpass (bool, optional): If True, applies bandpass integration. Defaults to False.
         """
-        fldname     = "_atm_noise" if atm_noise else ""
-        fldname    += "_nhits" if nhits else ""
+        self.nhits    = False # HITS map option disabled for now
+        
+        fldname     = "_atm_noise" if atm_noise else "_white_noise"
+        fldname    += "_nhits" if self.nhits else ""
+        fldname    += f"_{nsplits}splits"
         self.libdir = os.path.join(libdir, "LAT" + fldname)
         os.makedirs(self.libdir, exist_ok=True)
 
-        configs = {
-            self.freqs[i]: {"fwhm": self.fwhm[i]} for i in range(len(self.freqs))
-        }
-        self.config     = configs
+        
+        self.config = {}
+        for split in range(nsplits):
+            for band in range(len(self.freqs)):
+                self.config[f'{self.freqs[band]}-{split+1}'] = {"fwhm": self.fwhm[band]}
         self.nside      = nside
         self.beta       = beta
         self.cmb        = CMB(libdir, nside, beta)
         self.foreground = Foreground(libdir, nside, dust, synch, bandpass)
         self.dust_model = dust
         self.sync_model = synch
-        self.nhits      = nhits
-        self.noise      = Noise(nside, atm_noise, nhits)
+        self.nsplits    = nsplits
+        self.noise      = Noise(nside, atm_noise, nhits, nsplits)
 
-        if isinstance(alpha, list):
+        if isinstance(alpha, (list, np.ndarray)):
             assert len(alpha) == len(
                 self.freqs
             ), "Length of alpha list must match the number of frequency bands."
-            for i, a in enumerate(alpha):
-                self.config[self.freqs[i]]["alpha"] = a
+            for band, a in enumerate(alpha):
+                for split in range(nsplits):
+                    self.config[f'{self.freqs[band]}-{split+1}']["alpha"] = a
         else:
-            for f in self.freqs:
-                self.config[f]["alpha"] = alpha
+            for split in range(nsplits):
+                for band in range(len(self.freqs)):
+                    self.config[f'{self.freqs[band]}-{split+1}']["alpha"] = alpha
 
         self.alpha     = alpha
         self.mask      = Mask(nside).get_mask(False)
@@ -834,19 +835,18 @@ class LATsky:
         if bandpass:
             print("Bandpass is enabled")
 
-    def signalOnlyQU(self, idx: int, band: Union[str, int]) -> np.ndarray:
+    def signalOnlyQU(self, idx: int, band: str) -> np.ndarray:
         """
         Generates the Q and U Stokes parameters for the given frequency band, combining CMB, dust, and synchrotron signals.
 
         Parameters:
         idx (int): Index for the realization of the CMB map.
-        band (Union[str, int]): The frequency band. Can be an integer or a string (e.g., '93GHz').
+        band (str): The frequency band.
 
         Returns:
         np.ndarray: A NumPy array containing the combined Q and U maps.
         """
-        if isinstance(band, (str, np.str_)):
-            band = int(band[:-1])
+        band   = band[:band.index('-')]
         cmbQU  = np.array(self.cmb.get_cb_lensed_QU(idx))
         dustQU = self.foreground.dustQU(band)
         syncQU = self.foreground.syncQU(band)
@@ -878,6 +878,7 @@ class LATsky:
         hp.almxfl(Blm, bl[:,1]*pwf[1,:], inplace=True)
         return hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.cmb.lmax)
 
+
     def obsQUfname(self, idx: int, band: str) -> str:
         """
         Generates the filename for the observed Q and U Stokes parameter maps.
@@ -889,14 +890,13 @@ class LATsky:
         Returns:
         str: The file path for the observed Q and U maps.
         """
-        fwhm  = self.config[band]["fwhm"]
         alpha = self.config[band]["alpha"]
         beta  = self.cmb.beta
         return os.path.join(
             self.libdir,
-            f"obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{fwhm}_{idx:03d}.fits",
+            f"obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
         )
-
+    
     def saveObsQUs(self, idx: int) -> None:
         """
         Saves the observed Q and U Stokes parameter maps for all frequency bands.
@@ -904,16 +904,16 @@ class LATsky:
         Parameters:
         idx (int): Index for the realization of the CMB map.
         """
+        bands  = list(self.config.keys())
         signal = []
-        for band in self.freqs:
+        for band in bands:
             fwhm  = self.config[band]["fwhm"]
             alpha = self.config[band]["alpha"]
             signal.append(self.obsQUwAlpha(idx, band, fwhm, alpha))
         noise = self.noise.noiseQU()
         sky   = np.array(signal) + noise
-        for i in tqdm(range(len(self.freqs)), desc="Saving Observed QUs", unit="band"):
-            band  = self.freqs[i]
-            fname = self.obsQUfname(idx, band)
+        for i in tqdm(range(len(bands)), desc="Saving Observed QUs", unit="band"):
+            fname = self.obsQUfname(idx, bands[i])
             hp.write_map(fname, sky[i]*self.mask, dtype=np.float64)
 
     def obsQU(self, idx: int, band: str) -> np.ndarray:
@@ -971,3 +971,4 @@ class Mask:
             return ivar
         else:
             return (ivar > 0).astype(int)
+ 
