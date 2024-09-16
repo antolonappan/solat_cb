@@ -9,6 +9,7 @@ from tqdm import tqdm
 from lat_cb import mpi
 import matplotlib.pyplot as plt  
 from typing import Dict, Optional, Any, Union, List, Tuple
+import requests
 
 
 def inrad(alpha: float) -> float:
@@ -39,6 +40,17 @@ def cli(cl: np.ndarray) -> np.ndarray:
     ret[np.where(cl > 0)] = 1.0 / cl[np.where(cl > 0)]
     return ret
 
+def download_file(url, filename):
+    """Download a file with a progress bar."""
+    response = requests.get(url, stream=True)
+    total_size = int(response.headers.get('content-length', 0))
+    block_size = 1024 # 1 Kibibyte
+    t = tqdm(total=total_size, unit='iB', unit_scale=True)
+    with open(filename, 'wb') as file:
+        for data in response.iter_content(block_size):
+            t.update(len(data))
+            file.write(data)
+    t.close()
 
 # PDP: quite outdated model, we should consider at least updating it to v3.1.2
 # at some point
@@ -412,10 +424,10 @@ class CMB:
             f"cmbQU_N{self.nside}_{str(self.beta).replace('.','p')}_{idx:03d}.fits",
         )
         if os.path.isfile(fname):
-            return hp.read_map(fname, field=[0, 1])  # type: ignore
+            return hp.read_map(fname, field=[0, 1])  
         else:
             spectra = self.get_cb_lensed_spectra(
-                beta=self.beta,
+                beta=self.beta if self.beta is not None else 0.0,
                 dl=False,
             )
             T, E, B = hp.synalm(
@@ -522,7 +534,10 @@ class Foreground:
                 nside=self.nside, preset_strings=[f"d{int(self.dust_model)}"]
             )
             if self.bandpass:
-                nu, weights = self.bp_profile.get_profile(band)
+                if self.bp_profile is not None:
+                    nu, weights = self.bp_profile.get_profile(band)
+                else:
+                    raise ValueError("Bandpass profile is not initialized.")
                 nu = nu * u.GHz
                 maps = sky.get_emission(nu, weights)
             else:
@@ -562,7 +577,10 @@ class Foreground:
                 nside=self.nside, preset_strings=[f"s{int(self.sync_model)}"]
             )
             if self.bandpass:
-                nu, weights = self.bp_profile.get_profile(band)
+                if self.bp_profile is not None:
+                    nu, weights = self.bp_profile.get_profile(band)
+                else:
+                    raise ValueError("Bandpass profile is not initialized.")
                 nu = nu * u.GHz
                 maps = sky.get_emission(nu, weights)
             else:
@@ -580,7 +598,7 @@ class Foreground:
 
 class Noise:
 
-    def __init__(self, nside: int, atm_noise: bool = False, nhits: bool = False, nsplits: int = 2):
+    def __init__(self, nside: int, fsky: float, atm_noise: bool = False, nsplits: int = 2):
         """
         Initializes the Noise class for generating noise maps with or without atmospheric noise.
 
@@ -595,28 +613,11 @@ class Noise:
         self.sensitivity_mode = 2
         self.atm_noise        = atm_noise
         self.nsplits          = nsplits
-        self.mask             = Mask(nside=self.nside).get_mask(False)
-        self.fsky             = np.mean(self.mask**2)**2/np.mean(self.mask**4)
-        self.Nell             = SO_LAT_Nell_v3_0_0(self.sensitivity_mode, self.fsky, self.lmax, self.atm_noise)
+        self.Nell             = SO_LAT_Nell_v3_0_0(self.sensitivity_mode, fsky, self.lmax, self.atm_noise)
         if atm_noise:
              print("Noise Model: Atmospheric noise v3.0.0")
         else:
              print("Noise Model: White noise v3.0.0")
-
-        self.hits_map = Mask(nside=self.nside).get_mask(True)
-        self.nhits    = False
-        print("HITS map option disabled for now")
-        self.fac      = self.get_fac()
-    
-    def get_fac(self):
-        if self.nhits:
-            print("HITS map: enabled")
-            # PDP: magic number found empirically to reproduce Nell from Anton's variance map
-            # Could be an order 0 approximation but Adri doesn't like it
-            norm_hits_map = self.hits_map/np.median(self.hits_map)
-            return np.sqrt(norm_hits_map*0.7614)
-        else:
-            return self.mask
 
     @property
     def rand_alm(self) -> np.ndarray:
@@ -684,7 +685,7 @@ class Noise:
 
     def __white_noise__(self, band):
         n = hp.synfast(np.concatenate((np.zeros(2), self.Nell[band])), self.nside, lmax=self.lmax, pixwin=False)
-        return n*self.fac
+        return n
         
     
     def white_noise_maps(self) -> np.ndarray: 
@@ -728,7 +729,7 @@ class Noise:
         n_280   = hp.alm2map(nlm_280, self.nside, pixwin=False)
 
         n = np.array([n_27, n_39, n_93, n_145, n_225, n_280])
-        return n*self.fac
+        return n
 
     def noiseQU(self) -> np.ndarray:
         """
@@ -750,8 +751,6 @@ class Noise:
                 N.append([q[i], u[i]])
 
         return np.array(N)*np.sqrt(self.nsplits)
-
-
 
 class LATsky:
     # Understanding data splits as maps made by coadding the data from different
@@ -775,7 +774,6 @@ class LATsky:
         synch: int,
         alpha: Union[float, List[float]],
         atm_noise: bool = False,
-        nhits: bool = False,
         nsplits: int = 2,
         bandpass: bool = False,
     ):
@@ -794,10 +792,7 @@ class LATsky:
         nsplits (int, optional): Number of data splits to consider. Defaults to 2.
         bandpass (bool, optional): If True, applies bandpass integration. Defaults to False.
         """
-        self.nhits    = False # HITS map option disabled for now
-        
         fldname     = "_atm_noise" if atm_noise else "_white_noise"
-        fldname    += "_nhits" if self.nhits else ""
         fldname    += f"_{nsplits}splits"
         self.libdir = os.path.join(libdir, "LAT" + fldname)
         os.makedirs(self.libdir, exist_ok=True)
@@ -814,7 +809,8 @@ class LATsky:
         self.dust_model = dust
         self.sync_model = synch
         self.nsplits    = nsplits
-        self.noise      = Noise(nside, atm_noise, nhits, nsplits)
+        self.mask, self.fsky = self.__set_mask_fsky__(libdir)
+        self.noise      = Noise(nside, self.fsky, atm_noise, nsplits)
 
         if isinstance(alpha, (list, np.ndarray)):
             assert len(alpha) == len(
@@ -829,11 +825,15 @@ class LATsky:
                     self.config[f'{self.freqs[band]}-{split+1}']["alpha"] = alpha
 
         self.alpha     = alpha
-        self.mask      = Mask(nside).get_mask(False)
         self.atm_noise = atm_noise
         self.bandpass  = bandpass
         if bandpass:
             print("Bandpass is enabled")
+
+    
+    def __set_mask_fsky__(self,libdir):
+        maskobj = Mask(libdir,self.nside,'LAT')
+        return maskobj.mask, maskobj.fsky
 
     def signalOnlyQU(self, idx: int, band: str) -> np.ndarray:
         """
@@ -853,7 +853,7 @@ class LATsky:
         return cmbQU + dustQU + syncQU
 
     def obsQUwAlpha(
-        self, idx: int, band: Union[str, int], fwhm: float, alpha: float
+        self, idx: int, band: str, fwhm: float, alpha: float
     ) -> np.ndarray:
         """
         Generates the observed Q and U Stokes parameters after applying a rotation by alpha and smoothing with the pixel window function a Gaussian beam.
@@ -935,7 +935,7 @@ class LATsky:
             return hp.read_map(fname, field=[0, 1])
 
 class Mask:
-    def __init__(self, nside: int, libdir: Optional[str] = None) -> None:
+    def __init__(self, libdir: str, nside: int, tele: str) -> None:
         """
         Initializes the Mask class for handling and generating sky masks.
 
@@ -944,31 +944,72 @@ class Mask:
         libdir (Optional[str], optional): Directory where the mask may be saved or loaded from. Defaults to None.
         """
         self.nside     = nside
-        self.libdir    = libdir
-        self.mask_save = libdir is not None
-        self.fsky      = np.mean(self.get_mask(nhits=False)**2)**2/np.mean(self.get_mask(nhits=False)**4)
+        self.libdir    = os.path.join(libdir, "Mask")
+        if mpi.rank == 0:
+            os.makedirs(self.libdir, exist_ok=True)
+        assert tele in ["LAT", "SAT","OVERLAP"], "telescope should be 'LAT' or 'SO'"
+        self.tele = tele
 
-    def get_mask(self, nhits: bool = False) -> np.ndarray:
+        if self.tele == "OVERLAP":
+            self.mask = None
+        else:
+            self.mask = self.__get_mask__()
+        
+        self.fsky = self.__calculate_fsky__()
+
+    
+    def __calculate_fsky__(self) -> float:
         """
-        Retrieves or generates a sky mask.
+        Calculate the sky fraction (fsky) from the mask.
+        
+        Returns:
+        float: The fsky value.
+        """
+        if self.mask is None:
+            return 0
+        else:
+            return np.mean(self.mask ** 2) ** 2 / np.mean(self.mask ** 4)
 
-        Parameters:
-        nhits (bool, optional): If True, returns the hit count map instead of a binary mask. Defaults to False.
-
+    def __get_mask__(self) -> np.ndarray:
+        """
         Returns:
         np.ndarray: The mask as a NumPy array. If nhits is False, returns a binary mask; otherwise, returns the hit count map.
         """
-        mask = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "mask_N1024.fits"
-        )
-        ivar = hp.read_map(mask)
-
-        if self.nside != hp.get_nside(ivar):
-            # PDP: power=-2 is supposed to be better for hit maps
-            ivar = hp.ud_grade(ivar, self.nside, power=-2)
-
-        if nhits:
-            return ivar
+        select = {'SAT':0, 'LAT':1}
+        fname = os.path.join(self.libdir, f"mask.fits")
+        if os.path.isfile(fname):
+            mask = hp.read_map(fname,select[self.tele])
         else:
-            return (ivar > 0).astype(int)
- 
+            rmt_fname = 'https://figshare.com/ndownloader/files/49232491'
+            download_file(rmt_fname, fname)
+            mask = hp.read_map(fname,select[self.tele])
+
+        nside = hp.npix2nside(len(mask))
+
+        if nside != self.nside:
+            mask = hp.ud_grade(mask, self.nside)
+        
+        return mask
+    
+    def __mul__(self, other):
+        """
+        Multiplies two Mask objects and returns a new Mask object.
+        
+        Parameters:
+        other (Mask): Another Mask object to multiply with.
+        
+        Returns:
+        Mask: A new Mask object with the combined mask and updated fsky.
+        """
+        assert self.nside == other.nside, "Masks must have the same nside"
+        
+        if self.mask is None or other.mask is None:
+            raise ValueError("Cannot multiply masks when one of them is None")
+        combined_mask = self.mask * other.mask
+        
+        # Create a new Mask object for the combined mask
+        combined_mask_obj = Mask(libdir=self.libdir, nside=self.nside, tele="OVERLAP")
+        combined_mask_obj.mask = combined_mask
+        combined_mask_obj.fsky = np.mean(combined_mask ** 2) ** 2 / np.mean(combined_mask ** 4)
+        
+        return combined_mask_obj
