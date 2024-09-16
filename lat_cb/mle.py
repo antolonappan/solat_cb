@@ -75,7 +75,7 @@ class MLE:
         self.spec = spec_lib
         self.cmb = CMB(libdir,self.spec.lat.nside,self.spec.lat.alpha)
         self.cmb_cls = self.cmb.get_lensed_spectra(dl=False,dtype='a').T
-        self.fsky = np.mean(self.spec.mask)
+        self.fsky = self.spec.fsky
         self.niter_max =100
         self.nside = self.spec.lat.nside
         self.rm_corr = rm_corr
@@ -95,18 +95,18 @@ class MLE:
         self.bin_conf   = bin_configuration(bin_def)
         self.Nbins      = bin_def[0]
 
-        self.inst = {'27a' : {'telescope': 'LFT', 'nu':  '27', 'fwhm': 7.4, 'idx': 0}, 
-                     '39a' : {'telescope': 'LFT', 'nu':  '39', 'fwhm': 5.1, 'idx': 1}, 
-                     '93a' : {'telescope': 'LFT', 'nu':  '93', 'fwhm': 2.2, 'idx': 2}, 
-                     '145a': {'telescope': 'LFT', 'nu': '145', 'fwhm': 1.4, 'idx': 3}, 
-                     '225a': {'telescope': 'LFT', 'nu': '225', 'fwhm': 1.0, 'idx': 4}, 
-                     '280a': {'telescope': 'LFT', 'nu': '280', 'fwhm': 0.9, 'idx': 5},
-                     '27b' : {'telescope': 'LFT', 'nu':  '27', 'fwhm': 7.4, 'idx': 6}, 
-                     '39b' : {'telescope': 'LFT', 'nu':  '39', 'fwhm': 5.1, 'idx': 7}, 
-                     '93b': {'telescope': 'LFT', 'nu':  '93', 'fwhm': 2.2, 'idx': 8}, 
-                     '145b': {'telescope': 'LFT', 'nu': '145', 'fwhm': 1.4, 'idx': 9}, 
-                     '225b': {'telescope': 'LFT', 'nu': '225', 'fwhm': 1.0, 'idx': 10}, 
-                     '280b': {'telescope': 'LFT', 'nu': '280', 'fwhm': 0.9, 'idx': 11}}
+        self.inst = {'27-1' : {'telescope': 'LFT', 'nu':  '27', 'fwhm': 7.4, 'idx': 0}, 
+                     '39-1' : {'telescope': 'LFT', 'nu':  '39', 'fwhm': 5.1, 'idx': 1}, 
+                     '93-1' : {'telescope': 'LFT', 'nu':  '93', 'fwhm': 2.2, 'idx': 2}, 
+                     '145-1': {'telescope': 'LFT', 'nu': '145', 'fwhm': 1.4, 'idx': 3}, 
+                     '225-1': {'telescope': 'LFT', 'nu': '225', 'fwhm': 1.0, 'idx': 4}, 
+                     '280-1': {'telescope': 'LFT', 'nu': '280', 'fwhm': 0.9, 'idx': 5},
+                     '27-2' : {'telescope': 'LFT', 'nu':  '27', 'fwhm': 7.4, 'idx': 6}, 
+                     '39-2' : {'telescope': 'LFT', 'nu':  '39', 'fwhm': 5.1, 'idx': 7}, 
+                     '93-2': {'telescope': 'LFT', 'nu':  '93', 'fwhm': 2.2, 'idx': 8}, 
+                     '145-2': {'telescope': 'LFT', 'nu': '145', 'fwhm': 1.4, 'idx': 9}, 
+                     '225-2': {'telescope': 'LFT', 'nu': '225', 'fwhm': 1.0, 'idx': 10}, 
+                     '280-2': {'telescope': 'LFT', 'nu': '280', 'fwhm': 0.9, 'idx': 11}}
 
         self.Nbands = self.spec.Nbands
         self.bands = self.spec.bands
@@ -546,10 +546,17 @@ class MLE:
 
     def calculate(self,idx):
         try:
-            cl_o_o,cl_d_o,cl_d_d,cl_s_d,cl_s_s,cl_s_o =self.spec.get_spectra(idx)
+            spec_cls = self.spec.get_spectra(idx,True)
         except TypeError:
             self.spec.compute(idx)
-            cl_o_o,cl_d_o,cl_d_d,cl_s_d,cl_s_s,cl_s_o =self.spec.get_spectra(idx)
+            spec_cls = self.spec.get_spectra(idx,True)
+        
+        cl_o_o = spec_cls['oxo']
+        cl_d_o = spec_cls['dxo']
+        cl_d_d = spec_cls['dxd']
+        cl_s_d = spec_cls['sxd']
+        cl_s_s = spec_cls['sxs']
+        cl_s_o = spec_cls['sxo']
 
         EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=self.dt)
         BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=self.dt)

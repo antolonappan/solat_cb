@@ -35,7 +35,6 @@ class Spectra:
         # directory because they are the cls of those particular simulations
         # It will be easy to loose/mix them if they are outside
         fldname    = "_atm_noise" if self.lat.atm_noise else "_white_noise"
-        fldname   += "_nhits" if self.lat.nhits else ""
         libdiri    = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + fldname)
         comdir     = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + "_common")
         self.__set_dir__(libdiri, comdir)
