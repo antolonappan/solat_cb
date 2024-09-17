@@ -10,15 +10,14 @@ from lat_cb import mpi
 from typing import Dict, Optional, Any, Union, List, Tuple
 
 
-#TODO PDP: should increase the realism of the mask by adding Galatic and point source
-# mask from the published Planck analyses
-# Let me find the appropriate files
+# PDP: eventually we might want to also mask Galactic dust
 #TODO PDP: cls are calculated in series not parallel
 # each helper should be sent to a different process to accelerate calculation
 
 class Spectra:
     def __init__(self, libdir: str, lat_lib: LATsky, 
-                 aposcale: float = 1.0, template_bandpass: bool = False, pureB: bool = False):
+                 aposcale: float = 1.5, template_bandpass: bool = False, pureB: bool = False,
+                 CO: bool = True, PS: bool = True):
         """
         Initializes the Spectra class for computing and handling power spectra of observed CMB maps.
 
@@ -28,6 +27,8 @@ class Spectra:
         aposcale (float, optional): Apodisation scale in degrees. Defaults to 1 deg
         template_bandpass (bool, optional): Apply bandpass integration to the foreground template. Defaults to False.
         pureB (bool, optional): Apply B-mode purification. Defaults to False
+        CO (bool, optional): Mask the brightest regions of CO emission. Defautls to True.
+        PS (bool, optional): Mask the brightest polarised extragalactic point sources. Defaults to True.
         """
         self.lat   = lat_lib
         self.nside = self.lat.nside
@@ -46,11 +47,13 @@ class Spectra:
         self.fg       = Foreground(libdir, self.nside, self.lat.dust_model, self.lat.sync_model, self.temp_bp)
         
         #TODO PDP: We might need some binning, let me test it
-        self.binInfo = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
-        self.Nell    = self.binInfo.get_n_bands()
-        self.pureB   = pureB
+        self.binInfo  = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
+        self.Nell     = self.binInfo.get_n_bands()
+        self.pureB    = pureB
         self.aposcale = aposcale
-        self.mask     = self.get_apodised_mask(self.aposcale)
+        self.CO       = CO
+        self.PS       = PS
+        self.mask     = self.get_apodised_mask()
         self.fsky     = np.mean(self.mask**2)**2/np.mean(self.mask**4)
         
         # PDP: saving the spectra in this order makes the indexing of the mle easier
@@ -70,20 +73,38 @@ class Spectra:
         self.get_coupling_matrix()
         
         
-    def get_apodised_mask(self, aposcale: float = 1.0):
+    def get_apodised_mask(self) -> np.ndarray:
         fname = os.path.join(
             self.wdir,
-            f"mask_N{self.nside}_aposcale{str(self.aposcale).replace('.','p')}.fits",
+            f"mask_N{self.nside}_aposcale{str(self.aposcale).replace('.','p')}{'_CO' if self.CO else ''}{'_PS' if self.PS else ''}.fits",
         )
         if not os.path.isfile(fname):
+            bin_mask = np.copy(self.lat.mask)
+            if self.CO:
+                print("Masking CO")
+                co_file = os.path.join(
+                            os.path.dirname(os.path.realpath(__file__)), "binary_CO_mask_N1024.fits"
+                            )
+                co_mask   = hp.read_map(co_file)
+                bin_mask *= ( hp.ud_grade(co_mask, self.nside) > 0).astype(int)
+                del co_mask
+            if self.PS:
+                print("Masking PS")
+                ps_file = os.path.join(
+                            os.path.dirname(os.path.realpath(__file__)), "binary_comb_PS_mask_N1024.fits"
+                            )
+                ps_mask   = hp.read_map(ps_file)
+                bin_mask *= ( hp.ud_grade(ps_mask, self.nside) > 0).astype(int)
+                del ps_mask
             print("Apodising mask")
-            mask = nmt.mask_apodization(self.lat.mask, aposcale, apotype="C2")
+            mask = nmt.mask_apodization(bin_mask, self.aposcale, apotype="C2")
             print(f"Apodised mask saved to {fname}")
             hp.write_map(fname, mask, dtype=float)
             return mask
         else:
             print(f"Reading apodised mask from {fname}")
             return hp.read_map(fname, dtype=float)
+        
         
     def get_coupling_matrix(self) -> None:
         """
@@ -92,7 +113,7 @@ class Spectra:
         fsky  = np.round(self.fsky, 2)
         fname = os.path.join(
             self.wdir,
-            f"coupling_matrix_N{self.nside}_fsky{str(fsky).replace('.','p')}_aposcale{str(self.aposcale).replace('.','p')}{'_pureB' if self.pureB else ''}.fits",
+            f"coupling_matrix_N{self.nside}_fsky{str(fsky).replace('.','p')}_aposcale{str(self.aposcale).replace('.','p')}{'_CO' if self.CO else ''}{'_PS' if self.PS else ''}{'_pureB' if self.pureB else ''}.fits",
         )
         if not os.path.isfile(fname):
             print("Computing coupling Matrix")
@@ -122,7 +143,7 @@ class Spectra:
         cl_decoupled = self.workspace.decouple_cell(cl_coupled)
         return cl_decoupled
 
-    def __set_dir__(self, dir: str, cdir: str) -> None:
+    def __set_dir__(self, idir: str, cdir: str) -> None:
         """
         Sets up directories for storing power spectra and workspaces.
 
@@ -130,9 +151,9 @@ class Spectra:
         dir (str): Directory for specific spectra.
         cdir (str): Common directory for spectra and workspaces.
         """
-        self.oxo_dir = os.path.join(dir,  "obs_x_obs")
-        self.dxo_dir = os.path.join(dir,  "dust_x_obs")
-        self.sxo_dir = os.path.join(dir,  "sync_x_obs")
+        self.oxo_dir = os.path.join(idir,  "obs_x_obs")
+        self.dxo_dir = os.path.join(idir,  "dust_x_obs")
+        self.sxo_dir = os.path.join(idir,  "sync_x_obs")
         self.dxd_dir = os.path.join(cdir, "dust_x_dust")
         self.sxs_dir = os.path.join(cdir, "sync_x_sync")
         self.sxd_dir = os.path.join(cdir, "sync_x_dust")

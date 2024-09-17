@@ -430,6 +430,8 @@ class CMB:
                 beta=self.beta if self.beta is not None else 0.0,
                 dl=False,
             )
+            #TODO spectra probably start from ell=2 instead of 0
+            # check and add ell=0,1 if necessary
             T, E, B = hp.synalm(
                 [spectra["tt"], spectra["ee"], spectra["bb"], spectra["te"], spectra["eb"], spectra["tb"]],
                 lmax=self.lmax,
@@ -976,7 +978,7 @@ class Mask:
         np.ndarray: The mask as a NumPy array. If nhits is False, returns a binary mask; otherwise, returns the hit count map.
         """
         select = {'SAT':0, 'LAT':1}
-        fname = os.path.join(self.libdir, f"mask.fits")
+        fname = os.path.join(self.libdir, f"mask_{self.tele}.fits")
         if os.path.isfile(fname):
             mask = hp.read_map(fname,select[self.tele])
         else:
