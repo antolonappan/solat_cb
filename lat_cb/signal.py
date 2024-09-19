@@ -430,8 +430,7 @@ class CMB:
                 beta=self.beta if self.beta is not None else 0.0,
                 dl=False,
             )
-            #TODO spectra probably start from ell=2 instead of 0
-            # check and add ell=0,1 if necessary
+            # PDP: spectra start at ell=0, we are fine
             T, E, B = hp.synalm(
                 [spectra["tt"], spectra["ee"], spectra["bb"], spectra["te"], spectra["eb"], spectra["tb"]],
                 lmax=self.lmax,
@@ -754,6 +753,8 @@ class Noise:
 
         return np.array(N)*np.sqrt(self.nsplits)
 
+
+#TODO at the moment doesn't support anisotropic birefringence
 class LATsky:
     # Understanding data splits as maps made by coadding the data from different
     # fractions of the total observation time (e.g., first and second half), i.e.:
@@ -766,6 +767,7 @@ class LATsky:
 
     freqs = np.array(["27","39","93","145","225","280"])
     fwhm  = np.array([7.4, 5.1, 2.2, 1.4, 1.0, 0.9]) # arcmin
+    tube  = np.array(["LF", "LF", "MF", "MF", "HF", "HF"]) # tube each frequency occupies
 
     def __init__(
         self,
@@ -797,13 +799,13 @@ class LATsky:
         fldname     = "_atm_noise" if atm_noise else "_white_noise"
         fldname    += f"_{nsplits}splits"
         self.libdir = os.path.join(libdir, "LAT" + fldname)
-        os.makedirs(self.libdir, exist_ok=True)
+        os.makedirs(self.libdir+'/obs', exist_ok=True)
 
         
         self.config = {}
         for split in range(nsplits):
             for band in range(len(self.freqs)):
-                self.config[f'{self.freqs[band]}-{split+1}'] = {"fwhm": self.fwhm[band]}
+                self.config[f'{self.freqs[band]}-{split+1}'] = {"fwhm": self.fwhm[band], "opt. tube": self.tube[band]}
         self.nside      = nside
         self.beta       = beta
         self.cmb        = CMB(libdir, nside, beta)
@@ -896,7 +898,7 @@ class LATsky:
         beta  = self.cmb.beta
         return os.path.join(
             self.libdir,
-            f"obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
+            f"obs/obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
         )
     
     def saveObsQUs(self, idx: int) -> None:
