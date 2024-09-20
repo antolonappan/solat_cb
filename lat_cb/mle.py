@@ -1,6 +1,8 @@
 # object oriented version of Patricia's code
 import numpy as np
 import healpy as hp
+import os
+import pickle as pl
 from lat_cb.spectra import Spectra
 from lat_cb.signal import CMB
 from lat_cb import mpi
@@ -58,12 +60,12 @@ def bin_configuration(info):
     return (ib_grid, il_grid, np.array(w_list), np.array(ell_list))
 
 
-#TODO might change the shape of the output array
+#TODO might change the shape of the output array when optimising linear system terms
 def bin_spec_matrix(spec, info):
     (ib_grid, il_grid, w_array, ell_array) = info
     return np.sum(w_array[ib_grid,il_grid]*spec[:,:,ell_array[ib_grid,il_grid]], axis=3)
 
-#TODO might change the shape of the output array
+#TODO might change the shape of the output array when optimising linear system terms
 def bin_cov_matrix(cov, info):
     (ib_grid, il_grid, w_array, ell_array) = info
     return np.sum(w_array[ib_grid,il_grid]**2*cov[:,:,:,ell_array[ib_grid,il_grid]], axis=4)
@@ -74,14 +76,22 @@ class MLE:
                    "beta + alpha", "Ad + beta + alpha", "As + Ad + beta + alpha","As + Asd + Ad + beta + alpha"]
     implemented = ["alpha"]
     
-    def __init__(self, libdir, spec_lib, fit, 
+    def __init__(self, libdir, spec_lib, fit, sim, 
                  alpha_per_split=False,
                  rm_same_tube=False,
                  binwidth=20, bmin=51, bmax=1000):
         self.niter_max = 100
         self.tol       = 0.5 # arcmin
-        
+        #TODO PDP: The estimator should be linked to a specific simulation
+        # I feel like this is more practical for analysing results after computing them
+        # Creating a new instance of MLE takes 42.6 ms in my laptop
+        # so creating a new object per simulation is not going to produce much overhead
+        # The other option is creating a 'Results' object that handles the access to variables
+        # in the dictionary
+        self.sim_idx   = sim #      
         self.spec      = spec_lib
+        self.libdir    = self.spec.lat.libdir+'/mle'
+        os.makedirs(self.libdir, exist_ok=True)
         self.nside     = self.spec.nside
         self.cmb       = CMB(libdir, self.nside, beta=0, model='iso')
         self.cmb_cls   = self.cmb.get_lensed_spectra(dl=False, dtype='d')
@@ -125,37 +135,37 @@ class MLE:
             ext_par = 1
             self.params["ml"]["Iter 0"]         = { 'Ad':1.0  } 
             self.params["std fisher"]["Iter 0"] = { 'Ad':None }
-            self.params["variables"]           += 'Ad, '
+            self.params["variables"]           += 'Ad'
         elif self.fit=="beta + alpha":
             ext_par = 1
             self.params["ml"]["Iter 0"]         = { 'beta':0.0  }
             self.params["std fisher"]["Iter 0"] = { 'beta':None }
-            self.params["variables"]           += 'beta, '
+            self.params["variables"]           += 'beta'
         elif self.fit=="As + Ad + alpha":
             ext_par = 2
             self.params["ml"]["Iter 0"]         = { 'As':1.0,  'Ad':1.0  }
             self.params["std fisher"]["Iter 0"] = { 'As':None, 'Ad':None }
-            self.params["variables"]           += 'As, Ad, '
+            self.params["variables"]           += 'As, Ad'
         elif self.fit=="Ad + beta + alpha":
             ext_par = 2
             self.params["ml"]["Iter 0"]         = { 'Ad':1.0,  'beta':0.0}
             self.params["std fisher"]["Iter 0"] = { 'Ad':None, 'beta':0.0 }
-            self.params["variables"]           += 'Ad, beta, '
+            self.params["variables"]           += 'Ad, beta'
         elif self.fit=="As + Ad + beta + alpha":
             ext_par = 3
             self.params["ml"]["Iter 0"]         = { 'As':1.0, 'Ad':1.0, 'beta':0.0  }
             self.params["std fisher"]["Iter 0"] = { 'As':None,'Ad':None,'beta':None }
-            self.params["variables"]           += 'As, Ad, beta, '
+            self.params["variables"]           += 'As, Ad, beta'
         elif self.fit=="As + Asd + Ad + alpha":
             ext_par = 3
             self.params["ml"]["Iter 0"]         = { 'As':1.0,  'Asd':1.0,  'Ad':1.0 }
             self.params["std fisher"]["Iter 0"] = { 'As':None, 'Asd':None, 'Ad':None}
-            self.params["variables"]           += 'As, Asd, Ad, ' 
+            self.params["variables"]           += 'As, Asd, Ad' 
         elif self.fit=="As + Asd + Ad + beta + alpha":
             ext_par = 4
             self.params["ml"]["Iter 0"]         = { 'As':1.0, 'Asd':1.0,  'Ad':1.0, 'beta':0.0 }
             self.params["std fisher"]["Iter 0"] = { 'As':None,'Asd':None, 'Ad':None,'beta':None }
-            self.params["variables"]           += 'As, Asd, Ad, beta, '
+            self.params["variables"]           += 'As, Asd, Ad, beta'
         self.ext_par         = ext_par
         self.alpha_per_split = alpha_per_split
         if alpha_per_split:
@@ -164,7 +174,7 @@ class MLE:
             for ii, band in enumerate(self.bands):
                 self.params["ml"]["Iter 0"][band]         = 0.0
                 self.params["std fisher"]["Iter 0"][band] = None
-                self.params["variables"]                 += f'{band}, '
+                self.params["variables"]                 += f'{band}'if (ii==0 and self.fit=="alpha") else f', {band}'
                 self.inst[band]["alpha idx"]              = ii
         else:
             print("Fitting a common polarisation angle per frequency")
@@ -173,7 +183,7 @@ class MLE:
             for ii, freq in enumerate(self.spec.freqs):
                 self.params["ml"]["Iter 0"][freq]         = 0.0
                 self.params["std fisher"]["Iter 0"][freq] = None
-                self.params["variables"]                 += f'{freq}, '
+                self.params["variables"]                 += f'{freq}'if (ii==0 and self.fit=="alpha") else f', {freq}'
                 for split in range(self.spec.lat.nsplits):
                      self.inst[f'{freq}-{split+1}']["alpha idx"] = counter
                 counter += 1
@@ -279,6 +289,7 @@ class MLE:
             alphas += self.params["ml"][f"Iter {Niter}"]['beta']
             
         return alphas
+
 
 ############################################################################### 
 ### Combination of covariance matrix elements
@@ -1032,35 +1043,36 @@ class MLE:
         for ii, band_i in enumerate(self.bands):
             idx_i = self.inst[band_i]['alpha idx']
             # alpha_i
-            ind_term[idx_i] = 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
+            ind_term[idx_i] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
             for jj, band_j in enumerate(self.bands):
                 idx_j = self.inst[band_j]['alpha idx']
                 # alpha_i - alpha_j terms
                 aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
                 aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
                 aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
-                sys_mat[idx_i, idx_j] = 2*( aux1 + aux2 - 2*aux3 )
+                sys_mat[idx_i, idx_j] += 2*( aux1 + aux2 - 2*aux3 )
         
         # solve Ax=B
         # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
         ang_now = np.linalg.solve(sys_mat, ind_term)
         cov_now = np.linalg.inv(sys_mat)
         std_now = np.sqrt(np.diagonal(cov_now)) 
-        if np.any( np.isnan(std_now) ):
-            raise StopIteration()
-
-        # save results
+        
+        # save results even if something went wrong
+        self.params["ml"][f"Iter {Niter+1}"]         = {}
+        self.params["std fisher"][f"Iter {Niter+1}"] = {}
         self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                self.params["ml"]["Iter {Niter+1}"][band]         = ang_now[ii]
-                self.params["std fisher"]["Iter {Niter+1}"][band] = std_now[ii]
+                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii]
+                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"]["Iter {Niter+1}"][freq]         = ang_now[ii]
-                self.params["std fisher"]["Iter {Niter+1}"][freq] = std_now[ii]
+                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii]
+                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii]
         
-        
+        if np.any( np.isnan(std_now) ):
+            raise StopIteration()
 
     def __linear_system_Ad_alpha__(self, iC, Niter):
         raise ValueError("Not implemented")
@@ -1217,13 +1229,15 @@ class MLE:
 
 ############################################################################### 
 
-    def calculate(self, idx):
+    
+    def calculate(self, return_result=False):
+        # this function always saves the result
         # read the input spectra 
         try:
-            input_cls = self.spec.get_spectra(idx, sync='As' in self.fit)
+            input_cls = self.spec.get_spectra(self.sim_idx, sync='As' in self.fit)
         except TypeError:
-            self.spec.compute(idx, sync='As' in self.fit)
-            input_cls = self.spec.get_spectra(idx, sync='As' in self.fit)
+            self.spec.compute(self.sim_idx, sync='As' in self.fit)
+            input_cls = self.spec.get_spectra(self.sim_idx, sync='As' in self.fit)
         
         # format cls and calculate elements of covariance matrix
         self.process_cls(input_cls)
@@ -1232,10 +1246,8 @@ class MLE:
         converged = False
         niter     = 0
         while not converged:
-            # (Nbins, N(N-1), N(N-1))
             cov    = self.build_cov(niter)
             invcov = np.linalg.inv(cov/self.fsky)
-            
             try:
                 self.solve_linear_system(invcov, niter)
                 # evaluate convergence of the iterative calculation 
@@ -1258,16 +1270,33 @@ class MLE:
                 converged = True
                 
             niter += 1
-        #TODO save results to disk?
-        return None
-        
-    
-    def estimate_angle(self, idx):
-        ang_list, _,_ = self.calculate(idx)
-        angs = np.rad2deg(ang_list[-1])
-        result = {}
-        for i, b in enumerate(self.bands):
-            result[f"alpha_{b}"] = angs[i+4]
-        result['beta'] = angs[3]
-        return result
+        #save results to disk
+        pl.dump(self.params, open(self.result_name(self.sim_idx), "wb"), protocol=pl.HIGHEST_PROTOCOL)
+        if return_result:
+            return self.params
+        #TODO if you add the configuration information to mle.params, then it's the perfect
+        # dictionary to save, it already has everything
+        # but maybe you don't need to if it's linked to a MLE object from the start
 
+        
+    def result_name(self, idx):
+        path     = self.libdir
+        fit_tag  = f"{self.fit}{'_sameAlphaPerSplit' if self.alpha_per_split else '_diffAlphaPerSplit'}{'_rmSameTube' if self.rm_same_tube else ''}{'_tempBP'if self.spec.temp_bp else ''}" 
+        bin_tag  = f"Nb{self.nlb}_bmin{self.bmin}_bmax{self.bmax}"
+        spec_tag = f"aposcale{str(self.spec.aposcale).replace('.','p')}{'_CO' if self.spec.CO else ''}{'_PS' if self.spec.PS else ''}{'_pureB' if self.spec.pureB else ''}_N{self.nside}"
+        return f"{path}/ml_params_{fit_tag}_{bin_tag}_{spec_tag}_{idx:03d}.pkl"
+    
+
+    def estimate_angles(self, overwrite=False, Niter=-1):
+        file = self.result_name(self.sim_idx)
+        if (not os.path.isfile(file)) or overwrite:
+            params = self.calculate(return_result=True)
+        else:
+            params = pl.load(open(file, "rb"))
+            self.params = params
+        max_iter = len(params["ml"].keys())
+        result   = params["ml"][f"Iter {max_iter-1 if Niter==-1 else Niter}"]
+        for var in params["variables"].split(", "):
+            if var not in ["As", "Asd", "Ad"]:
+                result[var] = np.rad2deg(result[var])
+        return  result
