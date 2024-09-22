@@ -326,14 +326,17 @@ class MLE:
         # observed * observed; remove all EB except the one in T0
         return To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:]
 
+    #TODO
     def __cov_Ad_alpha__(self, Niter):
         raise ValueError("Not implemented")
         return None
     
+    #TODO
     def __cov_As_Ad_alpha__(self, Niter):
         raise ValueError("Not implemented")
         return None
     
+    #TODO
     def __cov_As_Asd_Ad_alpha__(self, Niter):
         raise ValueError("Not implemented")
         return None
@@ -388,10 +391,12 @@ class MLE:
         cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
         return cov
     
+    #TODO
     def __cov_As_Ad_beta_alpha__(self, Niter):
         raise ValueError("Not implemented")
         return None
     
+    #TODO
     def __cov_As_Asd_Ad_beta_alpha__(self, Niter):
         raise ValueError("Not implemented")
         # This step shouldn't be necessary but at times I've had problems with overwritten variables during iteration
@@ -505,8 +510,6 @@ class MLE:
         To[2,:,:,:] = (BiBjo[self.MNi,self.MNp,:]*BiBjo[self.MNj,self.MNq,:] + BiBjo[self.MNi,self.MNq,:]*BiBjo[self.MNj,self.MNp,:])/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(To, self.bin_conf), 3, 1)
         
-    #TODO retocar
-    # old Ts
     def C_sxs(self, EiEjs, BiBjs, EiBjs, BiEjs):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
@@ -523,7 +526,6 @@ class MLE:
         Ts[3,:,:,:] = BiBjs[self.MNi,self.MNq,:]*EiEjs[self.MNj,self.MNp,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Ts, self.bin_conf), 3, 1)
         
-
     def C_dxd(self, EiEjd, BiBjd, EiBjd, BiEjd):
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
@@ -540,12 +542,8 @@ class MLE:
         Td[3,:,:,:] = BiBjd[self.MNi,self.MNq,:]*EiEjd[self.MNj,self.MNp,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Td, self.bin_conf), 3, 1)
         
-    #TODO retocar
-    # old TSD
-    def C_sdxsd(self, EiEjs, BiBjs, EiBjs, BiEjs, 
-                EiEjd, BiBjd, EiBjd, BiEjd,
+    def C_sdxsd(self, EiEjs, BiBjs, EiBjs, BiEjs, EiEjd, BiBjd, EiBjd, BiEjd,
                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
-            
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
         ##################### remove EB from T1, T2, T3
@@ -561,10 +559,7 @@ class MLE:
         TSD[3,:,:,:] = Bis_Bjd[self.MNi,self.MNq,:]*Eis_Ejd[self.MNp,self.MNj,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(TSD, self.bin_conf), 3, 1)
     
-    #TODO retocar
-    # old TDS
-    def C_dsxds(self, EiEjs, BiBjs, EiBjs, BiEjs,
-                EiEjd, BiBjd, EiBjd, BiEjd,
+    def C_dsxds(self, EiEjs, BiBjs, EiBjs, BiEjs, EiEjd, BiBjd, EiBjd, BiEjd,
                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
             
         lmax = self.spec.lmax
@@ -582,11 +577,7 @@ class MLE:
         TDS[3,:,:,:] = Bis_Bjd[self.MNq,self.MNi,:]*Eis_Ejd[self.MNj,self.MNp,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(TDS, self.bin_conf), 3, 1)
 
-    #TODO retocar
-    # old Ts_o
-    def C_sxo(self,Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo,
-                            Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
-            
+    def C_sxo(self,Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo):  
         lmax = self.spec.lmax
         ell=np.arange(0, lmax+1, 1)
         ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
@@ -602,7 +593,6 @@ class MLE:
         Ts_o[3,:,:,:] = Bis_Bjo[self.MNp,self.MNj,:]*Eis_Ejo[self.MNq,self.MNi,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Ts_o, self.bin_conf), 3, 1)
         
-
     def C_dxo(self, Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
@@ -619,13 +609,9 @@ class MLE:
         Td_o[3,:,:,:] = Bid_Bjo[self.MNp,self.MNj,:]*Eid_Ejo[self.MNq,self.MNi,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Td_o, self.bin_conf), 3, 1)
         
-    #TODO retocar
-    # old TSD_o
-    def C_sdxo(self,Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo,
-                            Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
-            
+    def C_sdxo(self,Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
         lmax = self.spec.lmax
-        ell = np.arange(0, lmax+1, 1)
+        ell  = np.arange(0, lmax+1, 1)
         ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
         # synch-dust * observed 
         TSD_o = np.zeros((4,self.Nbands*(self.Nbands-self.avoid),self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
@@ -639,11 +625,7 @@ class MLE:
         TSD_o[3,:,:,:] = Bis_Bjo[self.MNp,self.MNj,:]*Eid_Ejo[self.MNq,self.MNi,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(TSD_o, self.bin_conf), 3, 1)
     
-    #TODO retocar
-    # old TDS_o
-    def C_dsxo(self,Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo,
-                            Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
-            
+    def C_dsxo(self,Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
         ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
@@ -659,12 +641,7 @@ class MLE:
         TDS_o[3,:,:,:] = Bid_Bjo[self.MNp,self.MNj,:]*Eis_Ejo[self.MNq,self.MNi,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(TDS_o, self.bin_conf), 3, 1)
 
-    #TODO retocar
-    # old Ts_d
-    def C_sxd(self,EiEjs, BiBjs, EiBjs, BiEjs,
-                            EiEjd, BiBjd, EiBjd, BiEjd,
-                            Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
-            
+    def C_sxd(self, Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
@@ -688,12 +665,8 @@ class MLE:
         Ts_d[7,:,:,:] = Bis_Bjd[self.MNp,self.MNj,:]*Eis_Ejd[self.MNq,self.MNi,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Ts_d, self.bin_conf), 3, 1)
     
-    #TODO retocar
-    # old TSD_DS
-    def C_sdxds(self,EiEjs, BiBjs, EiBjs, BiEjs,
-                            EiEjd, BiBjd, EiBjd, BiEjd,
-                            Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
-            
+    def C_sdxds(self, EiEjs, BiBjs, EiBjs, BiEjs, EiEjd, BiBjd, EiBjd, BiEjd,
+                Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1,1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
@@ -717,14 +690,9 @@ class MLE:
         TSD_DS[7,:,:,:] = EiEjd[self.MNi,self.MNq,:]*BiBjs[self.MNj,self.MNp,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(TSD_DS, self.bin_conf), 3, 1)
         
-    #TODO retocar
-    # old Ts_SD
-    def C_sxSD(self,EiEjs, BiBjs, EiBjs, BiEjs,
-                            EiEjd, BiBjd, EiBjd, BiEjd,
-                            Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
-            
+    def C_sxsd(self,EiEjs, BiBjs, EiBjs, BiEjs, Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
         lmax = self.spec.lmax
-        ell = np.arange(0, lmax+1, 1)
+        ell  = np.arange(0, lmax+1, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
         # synch * synch-dust 
         Ts_SD = np.zeros((8, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
@@ -746,12 +714,7 @@ class MLE:
         Ts_SD[7,:,:,:] = BiBjs[self.MNp,self.MNi,:]*Eis_Ejd[self.MNq,self.MNj,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Ts_SD, self.bin_conf), 3, 1)
         
-    #TODO retocar
-    # old Ts_DS
-    def C_sxds(self,EiEjs, BiBjs, EiBjs, BiEjs,
-                            EiEjd, BiBjd, EiBjd, BiEjd,
-                            Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
-            
+    def C_sxds(self,EiEjs, BiBjs, EiBjs, BiEjs, Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
@@ -775,12 +738,7 @@ class MLE:
         Ts_DS[7,:,:,:] = Bis_Bjd[self.MNp,self.MNi,:]*EiEjs[self.MNq,self.MNj,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Ts_DS, self.bin_conf), 3, 1)
         
-    #TODO retocar
-    # old Td_SD
-    def C_dxsd(self,EiEjs, BiBjs, EiBjs, BiEjs,
-                            EiEjd, BiBjd, EiBjd, BiEjd,
-                            Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
-          
+    def C_dxsd(self, EiEjd, BiBjd, EiBjd, BiEjd, Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
         lmax = self.spec.lmax
         ell = np.arange(0, lmax+1, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
@@ -806,10 +764,7 @@ class MLE:
 
     #TODO retocar 
     #old Td_DS
-    def C_dxDS(self,EiEjs, BiBjs, EiBjs, BiEjs,
-                            EiEjd, BiBjd, EiBjd, BiEjd,
-                            Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
-            
+    def C_dxds(self, EiEjd, BiBjd, EiBjd, BiEjd, Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
         ##################### remove EB from T2, T3, T4, T5, T6, T7
@@ -833,7 +788,7 @@ class MLE:
         Td_DS[7,:,:,:] = BiBjd[self.MNp,self.MNi,:]*Eis_Ejd[self.MNj,self.MNq,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Td_DS, self.bin_conf), 3, 1)
 
-###############################################################################
+############################################################################### 
 ### Format cls and calculate elements of covariance matrix
 
     def process_cls(self, incls): 
@@ -890,14 +845,17 @@ class MLE:
   
         del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
 
+    #TODO
     def __process_cls_Ad_alpha__(self, incls):
         raise ValueError("Not implemented")
         return None
     
+    #TODO
     def __process_cls_As_Ad_alpha__(self, incls):
         raise ValueError("Not implemented")
         return None
-    
+ 
+    #TODO
     def __process_cls_As_Asd_Ad_alpha__(self, incls):
         raise ValueError("Not implemented")
         return None
@@ -946,7 +904,6 @@ class MLE:
   
         del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
 
-    
     def __process_cls_Ad_beta_alpha__(self, incls):
         lmax   = self.spec.lmax
         # for the fit
@@ -1024,11 +981,12 @@ class MLE:
         del EiEj_d, BiBj_d, EiBj_d, BiEj_d
         del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
 
-    
+    #TODO
     def __process_cls_As_Ad_beta_alpha__(self, incls):
         raise ValueError("Not implemented")
         return None
     
+    #TODO
     def __process_cls_As_Asd_Ad_beta_alpha__(self, incls):
         raise ValueError("Not implemented")
         cl_o_o = spec_cls['oxo']
@@ -1229,14 +1187,17 @@ class MLE:
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
+    #TODO
     def __linear_system_Ad_alpha__(self, iC, Niter):
         raise ValueError("Not implemented")
         return None
     
+    #TODO
     def __linear_system_As_Ad_alpha__(self, iC, Niter):
         raise ValueError("Not implemented")
         return None
     
+    #TODO
     def __linear_system_As_Asd_Ad_alpha__(self, iC, Niter):
         raise ValueError("Not implemented")
         return None
@@ -1419,11 +1380,12 @@ class MLE:
             raise StopIteration()
             
 
-    
+    #TODO
     def __linear_system_As_Ad_beta_alpha__(self, iC, Niter):
         raise ValueError("Not implemented")
         return None
     
+    #TODO
     def __linear_system_As_Asd_Ad_beta_alpha__(self, iC, Niter):
         raise ValueError("Not implemented")
         B_ijpq = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
