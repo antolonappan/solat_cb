@@ -74,7 +74,7 @@ def bin_cov_matrix(cov, info):
 class MLE:
     fit_options = ["alpha", "Ad + alpha", "As + Ad + alpha", "As + Asd + Ad + alpha",
                    "beta + alpha", "Ad + beta + alpha", "As + Ad + beta + alpha","As + Asd + Ad + beta + alpha"]
-    implemented = ["alpha", "beta + alpha"]
+    implemented = ["alpha", "beta + alpha", "Ad + beta + alpha"]
     
     def __init__(self, libdir, spec_lib, fit, sim, 
                  alpha_per_split=False,
@@ -109,6 +109,7 @@ class MLE:
         self.Nbins    = bin_def[0]
 
         # define instrument
+        #TODO you could ask to use a specific combination of bands (excluding some)
         self.bands  = self.spec.bands
         self.Nbands = self.spec.Nbands
         self.inst   = {}
@@ -358,8 +359,34 @@ class MLE:
         return cov
     
     def __cov_Ad_beta_alpha__(self, Niter):
-        raise ValueError("Not implemented")
-        return None
+        # get parameters for this iteration
+        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
+        beta = self.params["ml"][f"Iter {Niter}"]["beta"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        # trigonometric factors rotating the spectra
+        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
+        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
+        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
+        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
+        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
+        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
+        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq
+        Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
+        Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq))        
+        # covariance elements
+        To   = np.copy(self.cov_terms['C_oxo'])
+        Tcmb = np.copy(self.cov_terms['C_cmb'])
+        Td   = np.copy(self.cov_terms['C_dxd'])
+        Td_o = np.copy(self.cov_terms['C_dxo'])
+        # observed * observed; remove all EB except the one in T0
+        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
+        # cmb * cmb + cmb * observed
+        cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
+        # dust * dust; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
+        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
+        return cov
     
     def __cov_As_Ad_beta_alpha__(self, Niter):
         raise ValueError("Not implemented")
@@ -496,8 +523,7 @@ class MLE:
         Ts[3,:,:,:] = BiBjs[self.MNi,self.MNq,:]*EiEjs[self.MNj,self.MNp,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Ts, self.bin_conf), 3, 1)
         
-    #TODO retocar
-    #old Td
+
     def C_dxd(self, EiEjd, BiBjd, EiBjd, BiEjd):
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
@@ -576,12 +602,10 @@ class MLE:
         Ts_o[3,:,:,:] = Bis_Bjo[self.MNp,self.MNj,:]*Eis_Ejo[self.MNq,self.MNi,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Ts_o, self.bin_conf), 3, 1)
         
-    #TODO retocar
-    # old Td_o
-    def C_dxo(self,Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo,
-                            Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
-            
-        ell=np.arange(0, lmax+1, 1)
+
+    def C_dxo(self, Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
+        lmax = self.spec.lmax
+        ell  = np.arange(0, lmax+1, 1)
         ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
         # dust * observed 
         Td_o = np.zeros((4,self.Nbands*(self.Nbands-self.avoid),self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
@@ -924,8 +948,82 @@ class MLE:
 
     
     def __process_cls_Ad_beta_alpha__(self, incls):
-        raise ValueError("Not implemented")
-        return None
+        lmax   = self.spec.lmax
+        # for the fit
+        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EEcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BBcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # for the covariance 
+        # obs - obs
+        EiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust - dust
+        EiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        BiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust - obs
+        Eid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+
+        # format cls
+        for ii, band_i in enumerate(self.bands):
+            idx_i  = self.inst[band_i]['cl idx']
+            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
+            fwhm_i = self.inst[band_i]['fwhm']
+            for jj, band_j in enumerate(self.bands):
+                idx_j  = self.inst[band_j]['cl idx']
+                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
+                fwhm_j = self.inst[band_j]['fwhm']
+                # for the fit 
+                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
+                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
+                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
+                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                EEcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("ee", fwhm_i, fwhm_j, lmax)
+                BBcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("bb", fwhm_i, fwhm_j, lmax)
+                # for the covariance
+                # observed * observed
+                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
+                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
+                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
+                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
+                # dust * dust
+                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
+                # dust * obs
+                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
+                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
+                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
+                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
+                
+                
+
+        # bin only once at the end
+        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
+                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
+                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
+                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
+                          "EEcmb_ij_b":bin_spec_matrix(EEcmb_ij_b, self.bin_conf),
+                          "BBcmb_ij_b":bin_spec_matrix(BBcmb_ij_b, self.bin_conf)}
+        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
+                          "C_cmb":self.C_cmb(),
+                          "C_dxd":self.C_dxd(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
+                          "C_dxo":self.C_dxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo)}
+  
+        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
+        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
+        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
+
     
     def __process_cls_As_Ad_beta_alpha__(self, incls):
         raise ValueError("Not implemented")
@@ -1224,8 +1322,103 @@ class MLE:
             raise StopIteration()
 
     def __linear_system_Ad_beta_alpha__(self, iC, Niter):
-        raise ValueError("Not implemented")
-        return None
+        B_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
+        E_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
+        I_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
+        ####
+        D_ij       = np.zeros((self.Nbands, self.Nbands), dtype=np.float64)
+        H_ij       = np.zeros((self.Nbands, self.Nbands), dtype=np.float64) 
+        sigma_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        tau_ij     = np.zeros((self.Nbands, self.Nbands), dtype=np.float64)
+        varphi_ij  = np.zeros((self.Nbands, self.Nbands), dtype=np.float64)
+        omega_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        ene_ij     = np.zeros((self.Nbands, self.Nbands), dtype=np.float64)  
+        epsilon_ij = np.zeros((self.Nbands, self.Nbands), dtype=np.float64)  
+        ####
+        A = 0; C = 0; F = 0; G = 0; O = 0; P = 0; R = 0; N = 0
+        LAMBDA = 0; mu = 0
+        for MN_pair in self.MNidx:
+            ii, jj, pp, qq, mm, nn = self.get_index(MN_pair)
+            B_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBo_ij_b'][pp,qq,:])
+            E_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            I_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            ####
+            D_ij[ii,jj]        += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            H_ij[ii,jj]        += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            sigma_ij[ii,jj]    += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            tau_ij[ii,jj]      += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:]) 
+            varphi_ij[ii,jj]   += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            omega_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            ene_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:]) 
+            epsilon_ij[ii,jj]  += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            ####
+            A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
+            O                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            P                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            C                  += np.sum(self.bin_terms['EEcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            F                  += np.sum(self.bin_terms['EEcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            G                  += np.sum(self.bin_terms['BBcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            R                  += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            N                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            LAMBDA             += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            mu                 += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+        # build system matrix and independent term
+        sys_mat  = np.zeros((self.Nvar, self.Nvar), dtype=np.float64)
+        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        
+        # variables ordered as Ad, beta, alpha_i
+        sys_mat[0, 0] = R # Ad - Ad  
+        sys_mat[0, 1] = 2*(LAMBDA-mu); sys_mat[1, 0] = 2*(LAMBDA-mu) # Ad - beta 
+        ind_term[0]   = N # Ad
+        
+        sys_mat[1, 1] = 4*(G+F-2*C) # beta - beta
+        ind_term[1]   = 2*(O-P)     # beta
+        
+        for ii, band_i in enumerate(self.bands):
+            idx_i = self.inst[band_i]['alpha idx']
+            
+            # Ad - alpha_i
+            Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
+            sys_mat[0, idx_i+self.ext_par] += 2*Ad_ai; 
+            sys_mat[idx_i+self.ext_par, 0] += 2*Ad_ai
+
+            # beta - alpha_i
+            b_a = np.sum(tau_ij[:,ii]) + np.sum(epsilon_ij[ii,:]) - np.sum(varphi_ij[:,ii]) - np.sum(ene_ij[ii,:])
+            sys_mat[1, idx_i+self.ext_par] += 4*b_a
+            sys_mat[idx_i+self.ext_par, 1] += 4*b_a
+
+            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:])) # alpha_i
+            for jj, band_j in enumerate(self.bands):
+                idx_j = self.inst[band_j]['alpha idx']
+                # alpha_i - alpha_j terms
+                aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
+                aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
+                aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
+                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+        
+        # solve Ax=B
+        # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
+        ang_now = np.linalg.solve(sys_mat, ind_term)
+        cov_now = np.linalg.inv(sys_mat)
+        std_now = np.sqrt(np.diagonal(cov_now)) 
+        
+        # save results even if something went wrong
+        self.params["ml"][f"Iter {Niter+1}"]         = {"Ad":ang_now[0], "beta":ang_now[1]}
+        self.params["std fisher"][f"Iter {Niter+1}"] = {"Ad":std_now[0], "beta":std_now[1]}
+        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.bands):
+                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+        
+        if np.any( np.isnan(std_now) ):
+            raise StopIteration()
+            
+
     
     def __linear_system_As_Ad_beta_alpha__(self, iC, Niter):
         raise ValueError("Not implemented")
@@ -1421,7 +1614,7 @@ class MLE:
     
 
     #TODO this function is overwriting things in self.params and messing with
-    # the rad2deg conversion  
+    # the rad2deg conversion   
     def estimate_angles(self, overwrite=False, Niter=-1):
         file = self.result_name(self.sim_idx)
         if (not os.path.isfile(file)) or overwrite:
