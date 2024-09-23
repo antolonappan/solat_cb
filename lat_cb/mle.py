@@ -72,7 +72,6 @@ def bin_cov_matrix(cov, info):
 class MLE:
     fit_options = ["alpha", "Ad + alpha", "As + Ad + alpha", "As + Asd + Ad + alpha",
                    "beta + alpha", "Ad + beta + alpha", "As + Ad + beta + alpha","As + Asd + Ad + beta + alpha"]
-    implemented = ["alpha", "beta + alpha", "Ad + beta + alpha"]
     
     def __init__(self, libdir, spec_lib, fit, sim, 
                  alpha_per_split=False,
@@ -118,7 +117,6 @@ class MLE:
             
         # parameters to calculate
         assert fit in self.fit_options, f"fit must be one of {self.fit_options}"
-        assert fit in self.implemented, f"{fit} fit not implemented yet"
         self.fit    = fit
         self.params = {"ml":{},
                        "std fisher":{},
@@ -1816,7 +1814,7 @@ class MLE:
             sigma_ij[ii,jj]    += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
             omega_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
             nu_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
-            psi_ij[ii,jj]      += np.sum(self.bin_terms['(BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            psi_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
             ####
             A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
             R                  += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
@@ -1913,7 +1911,7 @@ class MLE:
             pi_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:]) 
             rho_ij[ii,jj]      += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
             phi_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:]) 
-            psi_ij[ii,jj]      += np.sum(self.bin_terms['(BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            psi_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
             OMEGA_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
             ####
             A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
@@ -2208,7 +2206,7 @@ class MLE:
             ene_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:]) 
             epsilon_ij[ii,jj]  += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
             nu_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
-            psi_ij[ii,jj]      += np.sum(self.bin_terms['(BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            psi_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
             ####
             A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
             O                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
@@ -2332,7 +2330,7 @@ class MLE:
             pi_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:]) 
             rho_ij[ii,jj]      += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
             phi_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:]) 
-            psi_ij[ii,jj]      += np.sum(self.bin_terms['(BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            psi_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
             OMEGA_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
             ####
             A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
