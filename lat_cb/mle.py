@@ -186,11 +186,10 @@ class MLE:
                 counter += 1
         self.Nvar = self.Nalpha + self.ext_par
         
-        #TODO carefull with this
-        self.rm_same_tube = rm_same_tube #TODO let's see what to do with this
+        self.rm_same_tube = rm_same_tube
         if self.rm_same_tube:
-            avoid = 4
-            print("non debugged option")
+            print("Don't use cross-spectra of bands within the same optical tube")
+            avoid = 4 # remove auto-spectra and the 3 correlations between bands in the same tube
         else:
             avoid = 1 # always remove auto-spectra
         self.avoid = avoid
@@ -201,22 +200,16 @@ class MLE:
         self.MNp  = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid)), dtype=np.uint8)
         self.MNq  = np.zeros((self.Nbands*(self.Nbands-avoid), self.Nbands*(self.Nbands-avoid)), dtype=np.uint8)
         
-        #TODO careful with this
-        if self.rm_same_tube:
-            print("non debugged option")
-            IJidx = [] 
-            for ii in range(0, self.Nbands, 1):
-                for jj in range(0, self.Nbands, 1):
-                    if not self.same_tube(ii,jj):
-                        IJidx.append((ii,jj))
-            self.IJidx = np.array(IJidx, dtype=np.uint8)
-        else:
-            IJidx = [] 
-            for ii in range(0, self.Nbands, 1):
-                for jj in range(0, self.Nbands, 1):
+        IJidx = []
+        for ii, band_i in enumerate(self.bands):
+            for jj, band_j in enumerate(self.bands):
+                if self.rm_same_tube:
+                    if not self.same_tube(band_i, band_j):
+                        IJidx.append((ii, jj))
+                else:
                     if jj!=ii: 
                         IJidx.append((ii,jj))
-            self.IJidx = np.array(IJidx, dtype=np.uint8)
+        self.IJidx = np.array(IJidx, dtype=np.uint8)
 
         MNidx = [] 
         for mm in range(0, self.Nbands*(self.Nbands-avoid), 1):
@@ -231,22 +224,8 @@ class MLE:
             
             
             
-            
-    #TODO adapt to the new information about tubes
-    def same_tube(self, ii, jj):
-        print("non debugged option")
-        tube_low = {0,  1,  6,  7}
-        tube_med = {2,  3,  8,  9}
-        tube_hig = {4,  5, 10, 11}
-
-        if ii in tube_low and jj in tube_low:
-            return True
-        elif ii in tube_med and jj in tube_med:
-            return True
-        elif ii in tube_hig and jj in tube_hig:
-            return True
-        else:
-            return False
+    def same_tube(self, band_1, band_2):
+        return self.inst[band_1]["opt. tube"] == self.inst[band_2]["opt. tube"]
     
     def get_index(self, mn_pair):
         mm, nn = mn_pair

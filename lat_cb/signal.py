@@ -544,8 +544,6 @@ class Foreground:
             else:
                 maps = sky.get_emission(int(band) * u.GHz)
 
-            #TODO PDP: Shouldn't we do this for each frequency in the bandpass
-            # integration? Unit conversion is also frequency specific
             maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz))
 
             if mpi.rank == 0:
@@ -587,8 +585,6 @@ class Foreground:
             else:
                 maps = sky.get_emission(int(band) * u.GHz)
 
-            #TODO PDP: Shouldn't we do this for each frequency in the bandpass
-            # integration? Unit conversion is also frequency specific
             maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz))
 
             if mpi.rank == 0:
