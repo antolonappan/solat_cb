@@ -51,14 +51,12 @@ def bin_from_edges(start, end):
 
     return (n_bands, nell_array, ell_list, w_list)
 
-
 def bin_configuration(info):
     (n_bands, nell_array, ell_list, w_list) = info
     ib_array          = np.arange(0, n_bands,       1, dtype=int)
     il_array          = np.arange(0, nell_array[0], 1, dtype=int)
     (ib_grid,il_grid) = np.meshgrid(ib_array, il_array, indexing='ij')
     return (ib_grid, il_grid, np.array(w_list), np.array(ell_list))
-
 
 #TODO might change the shape of the output array when optimising linear system terms
 def bin_spec_matrix(spec, info):
@@ -326,21 +324,134 @@ class MLE:
         # observed * observed; remove all EB except the one in T0
         return To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:]
 
-    #TODO
     def __cov_Ad_alpha__(self, Niter):
-        raise ValueError("Not implemented")
-        return None
+        # get parameters for this iteration
+        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        # trigonometric factors rotating the spectra
+        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
+        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
+        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
+        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
+        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
+        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
+        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq      
+        # covariance elements
+        To   = np.copy(self.cov_terms['C_oxo'])
+        Td   = np.copy(self.cov_terms['C_dxd'])
+        Td_o = np.copy(self.cov_terms['C_dxo'])
+        # observed * observed; remove all EB except the one in T0
+        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
+        # dust * dust; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
+        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
+        return cov
     
-    #TODO
     def __cov_As_Ad_alpha__(self, Niter):
-        raise ValueError("Not implemented")
-        return None
+        # get parameters for this iteration
+        As   = self.params["ml"][f"Iter {Niter}"]["As"]
+        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        # trigonometric factors rotating the spectra
+        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
+        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
+        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
+        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
+        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
+        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
+        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq   
+        # covariance elements
+        To   = np.copy(self.cov_terms['C_oxo'])
+        Td   = np.copy(self.cov_terms['C_dxd'])
+        Ts   = np.copy(self.cov_terms['C_sxs'])
+        Ts_d = np.copy(self.cov_terms['C_sxd'])
+        Td_o = np.copy(self.cov_terms['C_dxo'])
+        Ts_o = np.copy(self.cov_terms['C_sxo'])
+        # observed * observed; remove all EB except the one in T0
+        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
+        # dust * dust; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
+        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
+        # synch * synch; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
+        # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
+        # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
+        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
+        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
+        return cov
     
-    #TODO
     def __cov_As_Asd_Ad_alpha__(self, Niter):
-        raise ValueError("Not implemented")
-        return None
-    
+        # get parameters for this iteration
+        As   = self.params["ml"][f"Iter {Niter}"]["As"]
+        Asd  = self.params["ml"][f"Iter {Niter}"]["Asd"]
+        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        # trigonometric factors rotating the spectra
+        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
+        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
+        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
+        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
+        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
+        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
+        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq 
+        # covariance elements
+        To     = np.copy(self.cov_terms['C_oxo'])
+        Td     = np.copy(self.cov_terms['C_dxd'])
+        Ts     = np.copy(self.cov_terms['C_sxs'])
+        Ts_d   = np.copy(self.cov_terms['C_sxd'])
+        Td_o   = np.copy(self.cov_terms['C_dxo'])
+        Ts_o   = np.copy(self.cov_terms['C_sxo'])
+        TSD    = np.copy(self.cov_terms['C_sdxsd'])
+        TDS    = np.copy(self.cov_terms['C_dsxds'])
+        TSD_DS = np.copy(self.cov_terms['C_sdxds'])
+        Ts_SD  = np.copy(self.cov_terms['C_sxsd'])
+        Ts_DS  = np.copy(self.cov_terms['C_sxds'])
+        Td_SD  = np.copy(self.cov_terms['C_dxsd'])
+        Td_DS  = np.copy(self.cov_terms['C_dxds'])
+        TSD_o  = np.copy(self.cov_terms['C_sdxo'])
+        TDS_o  = np.copy(self.cov_terms['C_dsxo'])
+        # covariance elements
+        # observed * observed; remove all EB except the one in T0
+        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
+        # synch * synch; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
+        # dust * dust; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
+        # synch-dust * synch-dust; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*Asd**2*TSD[0,:,:,:] + Eij*Epq*Asd**2*TSD[1,:,:,:] + Dij*Epq*Asd**2*TSD[2,:,:,:] + Eij*Dpq*Asd**2*TSD[3,:,:,:]
+        # dust-synch * dust-synch; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*Asd**2*TDS[0,:,:,:] + Eij*Epq*Asd**2*TDS[1,:,:,:] + Dij*Epq*Asd**2*TDS[2,:,:,:] + Eij*Dpq*Asd**2*TDS[3,:,:,:]
+        # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
+        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
+        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
+        # synch-dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
+        cov += + Dij*Dpq*Asd**2*( TSD_DS[0,:,:,:] + TSD_DS[1,:,:,:] ) + Eij*Epq*Asd**2*( TSD_DS[2,:,:,:] + TSD_DS[3,:,:,:] )
+        cov += + Dij*Epq*Asd**2*( TSD_DS[4,:,:,:] + TSD_DS[7,:,:,:] ) + Dpq*Eij*Asd**2*( TSD_DS[5,:,:,:] + TSD_DS[6,:,:,:] )
+        # synch * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
+        cov += + Dij*Dpq*As*Asd*( Ts_SD[0,:,:,:] + Ts_SD[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_SD[6,:,:,:] + Ts_SD[7,:,:,:] )
+        cov += + Dij*Epq*As*Asd*( Ts_SD[2,:,:,:] + Ts_SD[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_SD[3,:,:,:] + Ts_SD[4,:,:,:] )
+        # synch * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
+        cov += + Dij*Dpq*As*Asd*( Ts_DS[0,:,:,:] + Ts_DS[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_DS[6,:,:,:] + Ts_DS[7,:,:,:] )
+        cov += + Dij*Epq*As*Asd*( Ts_DS[2,:,:,:] + Ts_DS[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_DS[3,:,:,:] + Ts_DS[4,:,:,:] )
+        # dust * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
+        cov += + Dij*Dpq*Ad*Asd*( Td_SD[0,:,:,:] + Td_SD[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_SD[6,:,:,:] + Td_SD[7,:,:,:] )
+        cov += + Dij*Epq*Ad*Asd*( Td_SD[2,:,:,:] + Td_SD[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_SD[3,:,:,:] + Td_SD[4,:,:,:] )
+        # dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
+        cov += + Dij*Dpq*Ad*Asd*( Td_DS[0,:,:,:] + Td_DS[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_DS[6,:,:,:] + Td_DS[7,:,:,:] )
+        cov += + Dij*Epq*Ad*Asd*( Td_DS[2,:,:,:] + Td_DS[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_DS[3,:,:,:] + Td_DS[4,:,:,:] )
+        # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
+        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
+        # synch-dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*Asd*TSD_o[0,:,:,:] - Dpq*Asd*TSD_o[1,:,:,:] - Eij*Asd*TSD_o[2,:,:,:] - Epq*Asd*TSD_o[3,:,:,:]
+        # dust-synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*Asd*TDS_o[0,:,:,:] - Dpq*Asd*TDS_o[1,:,:,:] - Eij*Asd*TDS_o[2,:,:,:] - Epq*Asd*TDS_o[3,:,:,:]
+        return cov
+
     def __cov_beta_alpha__(self, Niter):
         # get parameters for this iteration
         beta = self.params["ml"][f"Iter {Niter}"]["beta"]
@@ -391,84 +502,121 @@ class MLE:
         cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
         return cov
     
-    #TODO
     def __cov_As_Ad_beta_alpha__(self, Niter):
-        raise ValueError("Not implemented")
-        return None
-    
-    #TODO
-    def __cov_As_Asd_Ad_beta_alpha__(self, Niter):
-        raise ValueError("Not implemented")
-        # This step shouldn't be necessary but at times I've had problems with overwritten variables during iteration
-        To    = np.copy(inTo)   ; Tcmb = np.copy(inTcmb)
-        Td    = np.copy(inTd)   ; Ts   = np.copy(inTs)    ; TSD    = np.copy(inTSD)   ; TDS   = np.copy(inTDS)
-        Td_o  = np.copy(inTd_o) ; Ts_o = np.copy(inTs_o)  ; TSD_o  = np.copy(inTSD_o) ; TDS_o = np.copy(inTDS_o)
-        Ts_d  = np.copy(inTs_d) ; Ts_SD = np.copy(inTs_SD); Ts_DS  = np.copy(inTs_DS)
-        Td_SD = np.copy(inTd_SD); Td_DS = np.copy(inTd_DS); TSD_DS = np.copy(inTSD_DS)
-        
-        # variables ordered like As, Ad, Asd, beta, alpha_i
-        As   = params[0]
-        Ad   = params[1]
-        Asd  = params[2]
-        beta = params[3]
-        ai   = params[self.MNi+self.ExtParam]; aj = params[self.MNj+self.ExtParam]
-        ah   = params[self.MNp+self.ExtParam]; ak = params[self.MNq+self.ExtParam]
-        
+        # get parameters for this iteration
+        As   = self.params["ml"][f"Iter {Niter}"]["As"]
+        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
+        beta = self.params["ml"][f"Iter {Niter}"]["beta"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
         # trigonometric factors rotating the spectra
-        cicj = np.cos(2*ai)*np.cos(2*aj); sisj = np.sin(2*ai)*np.sin(2*aj)
-        c4ij = np.cos(4*ai)+np.cos(4*aj)
+        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
+        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
+        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
+        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
+        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
+        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
+        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq
+        Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
+        Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq))        
+        # covariance elements
+        To   = np.copy(self.cov_terms['C_oxo'])
+        Tcmb = np.copy(self.cov_terms['C_cmb'])
+        Td   = np.copy(self.cov_terms['C_dxd'])
+        Ts   = np.copy(self.cov_terms['C_sxs'])
+        Ts_d = np.copy(self.cov_terms['C_sxd'])
+        Td_o = np.copy(self.cov_terms['C_dxo'])
+        Ts_o = np.copy(self.cov_terms['C_sxo'])
+        # observed * observed; remove all EB except the one in T0
+        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
+        # cmb * cmb + cmb * observed
+        cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
+        # dust * dust; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
+        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
+        # synch * synch; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
+        # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
+        # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
+        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
+        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
+        return cov
     
-        cpcq = np.cos(2*ah)*np.cos(2*ak); spsq = np.sin(2*ah)*np.sin(2*ak)
-        c4pq = np.cos(4*ah)+np.cos(4*ak)
-        
-        Aij = np.sin(4*aj)/c4ij; Apq = np.sin(4*ak)/c4pq
-        Bij = np.sin(4*ai)/c4ij; Bpq = np.sin(4*ah)/c4pq
-        Dij = 2*cicj/c4ij      ; Dpq = 2*cpcq/c4pq
-        Eij = 2*sisj/c4ij      ; Epq = 2*spsq/c4pq
-        Cij = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
-        Cpq = np.sin(4*beta)/(2*np.cos(2*ah+2*ak))
-        
+    def __cov_As_Asd_Ad_beta_alpha__(self, Niter):
+        # get parameters for this iteration
+        As   = self.params["ml"][f"Iter {Niter}"]["As"]
+        Asd  = self.params["ml"][f"Iter {Niter}"]["Asd"]
+        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
+        beta = self.params["ml"][f"Iter {Niter}"]["beta"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        # trigonometric factors rotating the spectra
+        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
+        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
+        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
+        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
+        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
+        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
+        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq
+        Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
+        Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq))   
+        # covariance elements
+        To     = np.copy(self.cov_terms['C_oxo'])
+        Tcmb   = np.copy(self.cov_terms['C_cmb'])
+        Td     = np.copy(self.cov_terms['C_dxd'])
+        Ts     = np.copy(self.cov_terms['C_sxs'])
+        Ts_d   = np.copy(self.cov_terms['C_sxd'])
+        Td_o   = np.copy(self.cov_terms['C_dxo'])
+        Ts_o   = np.copy(self.cov_terms['C_sxo'])
+        TSD    = np.copy(self.cov_terms['C_sdxsd'])
+        TDS    = np.copy(self.cov_terms['C_dsxds'])
+        TSD_DS = np.copy(self.cov_terms['C_sdxds'])
+        Ts_SD  = np.copy(self.cov_terms['C_sxsd'])
+        Ts_DS  = np.copy(self.cov_terms['C_sxds'])
+        Td_SD  = np.copy(self.cov_terms['C_dxsd'])
+        Td_DS  = np.copy(self.cov_terms['C_dxds'])
+        TSD_o  = np.copy(self.cov_terms['C_sdxo'])
+        TDS_o  = np.copy(self.cov_terms['C_dsxo'])
         # covariance elements
         # observed * observed; remove all EB except the one in T0
-        Cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
+        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
         # cmb * cmb + cmb * observed
-        Cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
+        cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
         # synch * synch; remove EB from T1, T2, T3
-        Cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
+        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
         # dust * dust; remove EB from T1, T2, T3
-        Cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
+        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
         # synch-dust * synch-dust; remove EB from T1, T2, T3
-        Cov += + Dij*Dpq*Asd**2*TSD[0,:,:,:] + Eij*Epq*Asd**2*TSD[1,:,:,:] + Dij*Epq*Asd**2*TSD[2,:,:,:] + Eij*Dpq*Asd**2*TSD[3,:,:,:]
+        cov += + Dij*Dpq*Asd**2*TSD[0,:,:,:] + Eij*Epq*Asd**2*TSD[1,:,:,:] + Dij*Epq*Asd**2*TSD[2,:,:,:] + Eij*Dpq*Asd**2*TSD[3,:,:,:]
         # dust-synch * dust-synch; remove EB from T1, T2, T3
-        Cov += + Dij*Dpq*Asd**2*TDS[0,:,:,:] + Eij*Epq*Asd**2*TDS[1,:,:,:] + Dij*Epq*Asd**2*TDS[2,:,:,:] + Eij*Dpq*Asd**2*TDS[3,:,:,:]
+        cov += + Dij*Dpq*Asd**2*TDS[0,:,:,:] + Eij*Epq*Asd**2*TDS[1,:,:,:] + Dij*Epq*Asd**2*TDS[2,:,:,:] + Eij*Dpq*Asd**2*TDS[3,:,:,:]
         # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
-        Cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
-        Cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
+        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
+        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
         # synch-dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
-        Cov += + Dij*Dpq*Asd**2*( TSD_DS[0,:,:,:] + TSD_DS[1,:,:,:] ) + Eij*Epq*Asd**2*( TSD_DS[2,:,:,:] + TSD_DS[3,:,:,:] )
-        Cov += + Dij*Epq*Asd**2*( TSD_DS[4,:,:,:] + TSD_DS[7,:,:,:] ) + Dpq*Eij*Asd**2*( TSD_DS[5,:,:,:] + TSD_DS[6,:,:,:] )
+        cov += + Dij*Dpq*Asd**2*( TSD_DS[0,:,:,:] + TSD_DS[1,:,:,:] ) + Eij*Epq*Asd**2*( TSD_DS[2,:,:,:] + TSD_DS[3,:,:,:] )
+        cov += + Dij*Epq*Asd**2*( TSD_DS[4,:,:,:] + TSD_DS[7,:,:,:] ) + Dpq*Eij*Asd**2*( TSD_DS[5,:,:,:] + TSD_DS[6,:,:,:] )
         # synch * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
-        Cov += + Dij*Dpq*As*Asd*( Ts_SD[0,:,:,:] + Ts_SD[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_SD[6,:,:,:] + Ts_SD[7,:,:,:] )
-        Cov += + Dij*Epq*As*Asd*( Ts_SD[2,:,:,:] + Ts_SD[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_SD[3,:,:,:] + Ts_SD[4,:,:,:] )
+        cov += + Dij*Dpq*As*Asd*( Ts_SD[0,:,:,:] + Ts_SD[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_SD[6,:,:,:] + Ts_SD[7,:,:,:] )
+        cov += + Dij*Epq*As*Asd*( Ts_SD[2,:,:,:] + Ts_SD[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_SD[3,:,:,:] + Ts_SD[4,:,:,:] )
         # synch * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
-        Cov += + Dij*Dpq*As*Asd*( Ts_DS[0,:,:,:] + Ts_DS[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_DS[6,:,:,:] + Ts_DS[7,:,:,:] )
-        Cov += + Dij*Epq*As*Asd*( Ts_DS[2,:,:,:] + Ts_DS[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_DS[3,:,:,:] + Ts_DS[4,:,:,:] )
+        cov += + Dij*Dpq*As*Asd*( Ts_DS[0,:,:,:] + Ts_DS[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_DS[6,:,:,:] + Ts_DS[7,:,:,:] )
+        cov += + Dij*Epq*As*Asd*( Ts_DS[2,:,:,:] + Ts_DS[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_DS[3,:,:,:] + Ts_DS[4,:,:,:] )
         # dust * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
-        Cov += + Dij*Dpq*Ad*Asd*( Td_SD[0,:,:,:] + Td_SD[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_SD[6,:,:,:] + Td_SD[7,:,:,:] )
-        Cov += + Dij*Epq*Ad*Asd*( Td_SD[2,:,:,:] + Td_SD[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_SD[3,:,:,:] + Td_SD[4,:,:,:] )
+        cov += + Dij*Dpq*Ad*Asd*( Td_SD[0,:,:,:] + Td_SD[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_SD[6,:,:,:] + Td_SD[7,:,:,:] )
+        cov += + Dij*Epq*Ad*Asd*( Td_SD[2,:,:,:] + Td_SD[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_SD[3,:,:,:] + Td_SD[4,:,:,:] )
         # dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
-        Cov += + Dij*Dpq*Ad*Asd*( Td_DS[0,:,:,:] + Td_DS[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_DS[6,:,:,:] + Td_DS[7,:,:,:] )
-        Cov += + Dij*Epq*Ad*Asd*( Td_DS[2,:,:,:] + Td_DS[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_DS[3,:,:,:] + Td_DS[4,:,:,:] )
+        cov += + Dij*Dpq*Ad*Asd*( Td_DS[0,:,:,:] + Td_DS[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_DS[6,:,:,:] + Td_DS[7,:,:,:] )
+        cov += + Dij*Epq*Ad*Asd*( Td_DS[2,:,:,:] + Td_DS[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_DS[3,:,:,:] + Td_DS[4,:,:,:] )
         # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        Cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
+        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
         # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        Cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
+        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
         # synch-dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        Cov += - Dij*Asd*TSD_o[0,:,:,:] - Dpq*Asd*TSD_o[1,:,:,:] - Eij*Asd*TSD_o[2,:,:,:] - Epq*Asd*TSD_o[3,:,:,:]
+        cov += - Dij*Asd*TSD_o[0,:,:,:] - Dpq*Asd*TSD_o[1,:,:,:] - Eij*Asd*TSD_o[2,:,:,:] - Epq*Asd*TSD_o[3,:,:,:]
         # dust-synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        Cov += - Dij*Asd*TDS_o[0,:,:,:] - Dpq*Asd*TDS_o[1,:,:,:] - Eij*Asd*TDS_o[2,:,:,:] - Epq*Asd*TDS_o[3,:,:,:]
-
-        return None
+        cov += - Dij*Asd*TDS_o[0,:,:,:] - Dpq*Asd*TDS_o[1,:,:,:] - Eij*Asd*TDS_o[2,:,:,:] - Epq*Asd*TDS_o[3,:,:,:]
+        return cov
 
 ###############################################################################
 ### Calculation of covariance matrix elements
@@ -510,37 +658,21 @@ class MLE:
         To[2,:,:,:] = (BiBjo[self.MNi,self.MNp,:]*BiBjo[self.MNj,self.MNq,:] + BiBjo[self.MNi,self.MNq,:]*BiBjo[self.MNj,self.MNp,:])/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(To, self.bin_conf), 3, 1)
         
-    def C_sxs(self, EiEjs, BiBjs, EiBjs, BiEjs):  
+    def C_fgxfg(self, EiEj, BiBj, EiBj, BiEj):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
         ##################### remove EB from T1, T2, T3
-        # synch * synch 
-        Ts = np.zeros((4, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
+        # synch * synch or dust * dust
+        Tfg = np.zeros((4, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
         #(1s)
-        Ts[0,:,:,:] = (EiEjs[self.MNi,self.MNp,:]*BiBjs[self.MNj,self.MNq,:] + EiBjs[self.MNi,self.MNq,:]*BiEjs[self.MNj,self.MNp,:])/(2*ell+1)
+        Tfg[0,:,:,:] = (EiEj[self.MNi,self.MNp,:]*BiBj[self.MNj,self.MNq,:] + EiBj[self.MNi,self.MNq,:]*BiEj[self.MNj,self.MNp,:])/(2*ell+1)
         #(2s)
-        Ts[1,:,:,:] = BiBjs[self.MNi,self.MNp,:]*EiEjs[self.MNj,self.MNq,:]/(2*ell+1) 
+        Tfg[1,:,:,:] = BiBj[self.MNi,self.MNp,:]*EiEj[self.MNj,self.MNq,:]/(2*ell+1) 
         #(3s)
-        Ts[2,:,:,:] = EiEjs[self.MNi,self.MNq,:]*BiBjs[self.MNj,self.MNp,:]/(2*ell+1)
+        Tfg[2,:,:,:] = EiEj[self.MNi,self.MNq,:]*BiBj[self.MNj,self.MNp,:]/(2*ell+1)
         #(4s)
-        Ts[3,:,:,:] = BiBjs[self.MNi,self.MNq,:]*EiEjs[self.MNj,self.MNp,:]/(2*ell+1)
-        return np.moveaxis(bin_cov_matrix(Ts, self.bin_conf), 3, 1)
-        
-    def C_dxd(self, EiEjd, BiBjd, EiBjd, BiEjd):
-        lmax = self.spec.lmax
-        ell  = np.arange(0, lmax+1, 1)
-        ##################### remove EB from T1, T2, T3
-        # dust * dust
-        Td = np.zeros((4, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
-        # (1d)
-        Td[0,:,:,:] = (EiEjd[self.MNi,self.MNp,:]*BiBjd[self.MNj,self.MNq,:] + EiBjd[self.MNi,self.MNq,:]*BiEjd[self.MNj,self.MNp,:])/(2*ell+1)
-        # (2d)
-        Td[1,:,:,:] = BiBjd[self.MNi,self.MNp,:]*EiEjd[self.MNj,self.MNq,:]/(2*ell+1) 
-        # (3d)
-        Td[2,:,:,:] = EiEjd[self.MNi,self.MNq,:]*BiBjd[self.MNj,self.MNp,:]/(2*ell+1)
-        # (4d)
-        Td[3,:,:,:] = BiBjd[self.MNi,self.MNq,:]*EiEjd[self.MNj,self.MNp,:]/(2*ell+1)
-        return np.moveaxis(bin_cov_matrix(Td, self.bin_conf), 3, 1)
+        Tfg[3,:,:,:] = BiBj[self.MNi,self.MNq,:]*EiEj[self.MNj,self.MNp,:]/(2*ell+1)
+        return np.moveaxis(bin_cov_matrix(Tfg, self.bin_conf), 3, 1)
         
     def C_sdxsd(self, EiEjs, BiBjs, EiBjs, BiEjs, EiEjd, BiBjd, EiBjd, BiEjd,
                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
@@ -577,37 +709,21 @@ class MLE:
         TDS[3,:,:,:] = Bis_Bjd[self.MNq,self.MNi,:]*Eis_Ejd[self.MNj,self.MNp,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(TDS, self.bin_conf), 3, 1)
 
-    def C_sxo(self,Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo):  
+    def C_fgxo(self,Eifg_Ejo, Bifg_Bjo, Eifg_Bjo, Bifg_Ejo):  
         lmax = self.spec.lmax
         ell=np.arange(0, lmax+1, 1)
         ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        # synch * observed 
-        Ts_o = np.zeros((4,self.Nbands*(self.Nbands-self.avoid),self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
+        # synch * observed  or dust * obs
+        Tfg_o = np.zeros((4,self.Nbands*(self.Nbands-self.avoid),self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
         # (1so)
-        Ts_o[0,:,:,:] = (Eis_Ejo[self.MNi,self.MNp,:]*Bis_Bjo[self.MNj,self.MNq,:] + Eis_Bjo[self.MNi,self.MNq,:]*Bis_Ejo[self.MNj,self.MNp,:])/(2*ell+1)
+        Tfg_o[0,:,:,:] = (Eifg_Ejo[self.MNi,self.MNp,:]*Bifg_Bjo[self.MNj,self.MNq,:] + Eifg_Bjo[self.MNi,self.MNq,:]*Bifg_Ejo[self.MNj,self.MNp,:])/(2*ell+1)
         # (1so*)
-        Ts_o[1,:,:,:] = (Eis_Ejo[self.MNp,self.MNi,:]*Bis_Bjo[self.MNq,self.MNj,:] + Eis_Bjo[self.MNp,self.MNj,:]*Bis_Ejo[self.MNq,self.MNi,:])/(2*ell+1)
+        Tfg_o[1,:,:,:] = (Eifg_Ejo[self.MNp,self.MNi,:]*Bifg_Bjo[self.MNq,self.MNj,:] + Eifg_Bjo[self.MNp,self.MNj,:]*Bifg_Ejo[self.MNq,self.MNi,:])/(2*ell+1)
         # (4so)
-        Ts_o[2,:,:,:] = Bis_Bjo[self.MNi,self.MNq,:]*Eis_Ejo[self.MNj,self.MNp,:]/(2*ell+1) 
+        Tfg_o[2,:,:,:] =  Bifg_Bjo[self.MNi,self.MNq,:]*Eifg_Ejo[self.MNj,self.MNp,:]/(2*ell+1) 
         # (4so*)
-        Ts_o[3,:,:,:] = Bis_Bjo[self.MNp,self.MNj,:]*Eis_Ejo[self.MNq,self.MNi,:]/(2*ell+1)
-        return np.moveaxis(bin_cov_matrix(Ts_o, self.bin_conf), 3, 1)
-        
-    def C_dxo(self, Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
-        lmax = self.spec.lmax
-        ell  = np.arange(0, lmax+1, 1)
-        ##################### remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        # dust * observed 
-        Td_o = np.zeros((4,self.Nbands*(self.Nbands-self.avoid),self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
-        # (1do)
-        Td_o[0,:,:,:] = (Eid_Ejo[self.MNi,self.MNp,:]*Bid_Bjo[self.MNj,self.MNq,:] + Eid_Bjo[self.MNi,self.MNq,:]*Bid_Ejo[self.MNj,self.MNp,:])/(2*ell+1)
-        # (1do*)
-        Td_o[1,:,:,:] = (Eid_Ejo[self.MNp,self.MNi,:]*Bid_Bjo[self.MNq,self.MNj,:] + Eid_Bjo[self.MNp,self.MNj,:]*Bid_Ejo[self.MNq,self.MNi,:])/(2*ell+1)
-        # (4do)
-        Td_o[2,:,:,:] = Bid_Bjo[self.MNi,self.MNq,:]*Eid_Ejo[self.MNj,self.MNp,:]/(2*ell+1)
-        # (4do*)
-        Td_o[3,:,:,:] = Bid_Bjo[self.MNp,self.MNj,:]*Eid_Ejo[self.MNq,self.MNi,:]/(2*ell+1)
-        return np.moveaxis(bin_cov_matrix(Td_o, self.bin_conf), 3, 1)
+        Tfg_o[3,:,:,:] =  Bifg_Bjo[self.MNp,self.MNj,:]*Eifg_Ejo[self.MNq,self.MNi,:]/(2*ell+1)
+        return np.moveaxis(bin_cov_matrix(Tfg_o, self.bin_conf), 3, 1)
         
     def C_sdxo(self,Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo):  
         lmax = self.spec.lmax
@@ -690,6 +806,7 @@ class MLE:
         TSD_DS[7,:,:,:] = EiEjd[self.MNi,self.MNq,:]*BiBjs[self.MNj,self.MNp,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(TSD_DS, self.bin_conf), 3, 1)
         
+#TODO terms have a different order but if you are careful you could build C_fgxsd and C_fgxds    
     def C_sxsd(self,EiEjs, BiBjs, EiBjs, BiEjs, Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
@@ -762,8 +879,6 @@ class MLE:
         Td_SD[7,:,:,:] = Bis_Bjd[self.MNi,self.MNp,:]*EiEjd[self.MNq,self.MNj,:]/(2*ell+1)
         return np.moveaxis(bin_cov_matrix(Td_SD, self.bin_conf), 3, 1)
 
-    #TODO retocar 
-    #old Td_DS
     def C_dxds(self, EiEjd, BiBjd, EiBjd, BiEjd, Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd):  
         lmax = self.spec.lmax
         ell  = np.arange(0, lmax+1, 1)
@@ -845,21 +960,310 @@ class MLE:
   
         del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
 
-    #TODO
     def __process_cls_Ad_alpha__(self, incls):
-        raise ValueError("Not implemented")
-        return None
+        lmax   = self.spec.lmax
+        # for the fit
+        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # for the covariance 
+        # obs - obs
+        EiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust - dust
+        EiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        BiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust - obs
+        Eid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+
+        # format cls
+        for ii, band_i in enumerate(self.bands):
+            idx_i  = self.inst[band_i]['cl idx']
+            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
+            for jj, band_j in enumerate(self.bands):
+                idx_j  = self.inst[band_j]['cl idx']
+                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
+                # for the fit 
+                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
+                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
+                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
+                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                # for the covariance
+                # observed * observed
+                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
+                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
+                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
+                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
+                # dust * dust
+                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
+                # dust * obs
+                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
+                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
+                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
+                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
+                
+        # bin only once at the end
+        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
+                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
+                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
+                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf)}
+        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
+                          "C_cmb":self.C_cmb(),
+                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
+                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo)}
+  
+        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
+        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
+        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
     
-    #TODO
     def __process_cls_As_Ad_alpha__(self, incls):
-        raise ValueError("Not implemented")
-        return None
+        lmax   = self.spec.lmax
+        # for the fit
+        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # for the covariance 
+        # obs - obs
+        EiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust - dust
+        EiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        BiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust - obs
+        Eid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # sync - sync
+        EiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        BiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # sync - obs
+        Eis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # sync - dust
+        Eis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # format cls
+        for ii, band_i in enumerate(self.bands):
+            idx_i  = self.inst[band_i]['cl idx']
+            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
+            for jj, band_j in enumerate(self.bands):
+                idx_j  = self.inst[band_j]['cl idx']
+                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
+                # for the fit 
+                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
+                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
+                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
+                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                EBs_ij_b[ii,jj,:]   = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                # for the covariance
+                # observed * observed
+                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
+                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
+                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
+                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
+                # dust * dust
+                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
+                # dust * obs
+                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
+                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
+                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
+                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
+                # sync * sync
+                EiEj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_s[ii,jj,:]  = incls['sxs'][freq_j, freq_i, 2, :lmax+1]
+                # sync * obs
+                Eis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 0, :lmax+1]
+                Bis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 1, :lmax+1]
+                Eis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 2, :lmax+1]
+                Bis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 3, :lmax+1]      
+                # sync * dust
+                Eis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 0, :lmax+1]
+                Bis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 1, :lmax+1]
+                Eis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
+                Bis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 3, :lmax+1]
+                
+
+        # bin only once at the end
+        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
+                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
+                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
+                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
+                          "EBs_ij_b":bin_spec_matrix(EBs_ij_b, self.bin_conf)}
+        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
+                          "C_cmb":self.C_cmb(),
+                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
+                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
+                          "C_sxs":self.C_fgxfg(EiEj_s, BiBj_s, EiBj_s, BiEj_s),
+                          "C_sxo":self.C_fgxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo),
+                          "C_sxd":self.C_sxd(Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)}
+  
+        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
+        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
+        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
+        del EiEj_s, BiBj_s, EiBj_s, BiEj_s
+        del Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo    
+        del Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd
  
-    #TODO
     def __process_cls_As_Asd_Ad_alpha__(self, incls):
-        raise ValueError("Not implemented")
-        return None
-    
+        lmax   = self.spec.lmax
+        # for the fit
+        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EsBd_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EdBs_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        # for the covariance 
+        # observed * observed
+        EiEj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust * dust
+        EiEj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # synch * synch
+        EiEj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # synch * dust
+        Eis_Ejd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Bjd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eis_Bjd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Ejd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust * observed
+        Eid_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eid_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # synch * observed
+        Eis_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eis_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # format cls
+        for ii, band_i in enumerate(self.bands):
+            idx_i  = self.inst[band_i]['cl idx']
+            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
+            for jj, band_j in enumerate(self.bands):
+                idx_j  = self.inst[band_j]['cl idx']
+                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
+                # for the fit
+                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
+                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
+                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
+                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                EBs_ij_b[ii,jj,:]   = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                EsBd_ij_b[ii,jj,:]  = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
+                EdBs_ij_b[ii,jj,:]  = incls['sxd'][freq_j, freq_i, 3, :lmax+1]
+                # for the covariance
+                # observed * observed
+                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
+                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
+                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
+                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
+                # dust * dust
+                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
+                # sync * sync
+                EiEj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_s[ii,jj,:]  = incls['sxs'][freq_j, freq_i, 2, :lmax+1]
+                # sync * dust
+                Eis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 0, :lmax+1]
+                Bis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 1, :lmax+1]
+                Eis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
+                Bis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 3, :lmax+1]
+                # dust * obs
+                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
+                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
+                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
+                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
+                # sync * obs
+                Eis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 0, :lmax+1]
+                Bis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 1, :lmax+1]
+                Eis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 2, :lmax+1]
+                Bis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 3, :lmax+1]    
+
+        # bin only once at the end
+        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
+                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
+                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
+                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
+                          "EBs_ij_b":bin_spec_matrix(EBs_ij_b, self.bin_conf),
+                          "EsBd_ij_b":bin_spec_matrix(EsBd_ij_b, self.bin_conf),
+                          "EdBs_ij_b":bin_spec_matrix(EdBs_ij_b, self.bin_conf),}
+        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
+                          "C_cmb":self.C_cmb(),
+                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
+                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
+                          "C_sxs":self.C_fgxfg(EiEj_s, BiBj_s, EiBj_s, BiEj_s),
+                          "C_sxo":self.C_fgxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo),
+                          "C_sxd":self.C_sxd(Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_sdxsd":self.C_sdxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s,
+                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_dsxds":self.C_dsxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
+                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_sdxo":self.C_sdxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
+                                               Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
+                          "C_dsxo":self.C_dsxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
+                                               Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
+                          "C_sdxds":self.C_sdxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
+                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_sxsd":self.C_sxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s, Eis_Ejd, 
+                                               Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_sxds":self.C_sxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
+                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_dxsd":self.C_dxsd(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_dxds":self.C_dxds(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)}
+        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
+        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
+        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
+        del EiEj_s, BiBj_s, EiBj_s, BiEj_s
+        del Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo    
+        del Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd
+
     def __process_cls_beta_alpha__(self, incls):
         lmax   = self.spec.lmax
         # for the fit
@@ -963,8 +1367,6 @@ class MLE:
                 Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
                 Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
                 
-                
-
         # bin only once at the end
         self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
                           "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
@@ -974,136 +1376,266 @@ class MLE:
                           "BBcmb_ij_b":bin_spec_matrix(BBcmb_ij_b, self.bin_conf)}
         self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
                           "C_cmb":self.C_cmb(),
-                          "C_dxd":self.C_dxd(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
-                          "C_dxo":self.C_dxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo)}
+                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
+                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo)}
   
         del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
         del EiEj_d, BiBj_d, EiBj_d, BiEj_d
         del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
 
-    #TODO
     def __process_cls_As_Ad_beta_alpha__(self, incls):
-        raise ValueError("Not implemented")
-        return None
-    
-    #TODO
-    def __process_cls_As_Asd_Ad_beta_alpha__(self, incls):
-        raise ValueError("Not implemented")
-        cl_o_o = spec_cls['oxo']
-        cl_d_o = spec_cls['dxo']
-        cl_d_d = spec_cls['dxd']
-        cl_s_d = spec_cls['sxd']
-        cl_s_s = spec_cls['sxs']
-        cl_s_o = spec_cls['sxo']
-
-        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        EsBd_ij_b  = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        EdBs_ij_b  = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        EEcmb_ij_b = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        BBcmb_ij_b = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64) 
+        lmax   = self.spec.lmax
+        # for the fit
+        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EEcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BBcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
         # for the covariance 
-        # observed * observed
-        EiEj_o = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); BiBj_o = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        EiBj_o = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); BiEj_o = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        # dust * dust
-        EiEj_d = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); BiBj_d = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        EiBj_d = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); BiEj_d = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        # synch * synch
-        EiEj_s = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); BiBj_s = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        EiBj_s = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); BiEj_s = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        # synch * dust
-        Eis_Ejd = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); Bis_Bjd = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        Eis_Bjd = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); Bis_Ejd = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        # dust * observed
-        Eid_Ejo = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); Bid_Bjo = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        Eid_Bjo = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); Bid_Ejo = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        # synch * observed
-        Eis_Ejo = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); Bis_Bjo = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-        Eis_Bjo = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64); Bis_Ejo = np.zeros((self.Nbands, self.Nbands, self.bmax+1), dtype=np.float64)
-
-        for ii in range(0, self.Nbands, 1):
-            fwhm_i = self.inst[self.bands[ii]]['fwhm']
-            pos_i  = self.inst[self.bands[ii]]['idx']
-            for jj in range(0, self.Nbands,1):
-                fwhm_j = self.inst[self.bands[jj]]['fwhm']
-                pos_j  = self.inst[self.bands[jj]]['idx']
-                
-                # for the fit
-                EEo_ij_b[ii,jj,:]   = cl_o_o[pos_i, pos_j, 0, :self.bmax+1]
-                BBo_ij_b[ii,jj,:]   = cl_o_o[pos_i, pos_j, 1, :self.bmax+1]
-                EBo_ij_b[ii,jj,:]   = cl_o_o[pos_i, pos_j, 2, :self.bmax+1]
-                EBd_ij_b[ii,jj,:]   = cl_d_d[pos_i, pos_j, 2, :self.bmax+1]
-                EBs_ij_b[ii,jj,:]   = cl_s_s[pos_i, pos_j, 2, :self.bmax+1]
-                EsBd_ij_b[ii,jj,:]  = cl_s_d[pos_i, pos_j, 2, :self.bmax+1]
-                EdBs_ij_b[ii,jj,:]  = cl_s_d[pos_j, pos_i, 3, :self.bmax+1]
-                EEcmb_ij_b[ii,jj,:] = self.convolveCls_gaussBeams_pwf(self.cmb_cls[1,:], fwhm_i, fwhm_j, self.bmax)
-                BBcmb_ij_b[ii,jj,:] = self.convolveCls_gaussBeams_pwf(self.cmb_cls[2,:], fwhm_i, fwhm_j, self.bmax)
-
+        # obs - obs
+        EiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust - dust
+        EiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        BiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust - obs
+        Eid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # sync - sync
+        EiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        BiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # sync - obs
+        Eis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # sync - dust
+        Eis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # format cls
+        for ii, band_i in enumerate(self.bands):
+            idx_i  = self.inst[band_i]['cl idx']
+            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
+            fwhm_i = self.inst[band_i]['fwhm']
+            for jj, band_j in enumerate(self.bands):
+                idx_j  = self.inst[band_j]['cl idx']
+                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
+                fwhm_j = self.inst[band_j]['fwhm']
+                # for the fit 
+                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
+                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
+                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
+                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                EBs_ij_b[ii,jj,:]   = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                EEcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("ee", fwhm_i, fwhm_j, lmax)
+                BBcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("bb", fwhm_i, fwhm_j, lmax)
                 # for the covariance
                 # observed * observed
-                EiEj_o[ii,jj,:] = cl_o_o[pos_i,pos_j,0,:self.bmax+1]
-                BiBj_o[ii,jj,:] = cl_o_o[pos_i,pos_j,1,:self.bmax+1]
-                EiBj_o[ii,jj,:] = cl_o_o[pos_i,pos_j,2,:self.bmax+1]
-                BiEj_o[ii,jj,:] = cl_o_o[pos_j,pos_i,2,:self.bmax+1]
-                # foregrounds * foregrounds
-                EiEj_d[ii,jj,:]  = cl_d_d[pos_i,pos_j,0,:self.bmax+1]
-                BiBj_d[ii,jj,:]  = cl_d_d[pos_i,pos_j,1,:self.bmax+1]
-                EiBj_d[ii,jj,:]  = cl_d_d[pos_i,pos_j,2,:self.bmax+1]
-                BiEj_d[ii,jj,:]  = cl_d_d[pos_j,pos_i,2,:self.bmax+1]
-                EiEj_s[ii,jj,:]  = cl_s_s[pos_i,pos_j,0,:self.bmax+1]
-                BiBj_s[ii,jj,:]  = cl_s_s[pos_i,pos_j,1,:self.bmax+1]
-                EiBj_s[ii,jj,:]  = cl_s_s[pos_i,pos_j,2,:self.bmax+1]
-                BiEj_s[ii,jj,:]  = cl_s_s[pos_j,pos_i,2,:self.bmax+1]
-                Eis_Ejd[ii,jj,:] = cl_s_d[pos_i,pos_j,0,:self.bmax+1]
-                Bis_Bjd[ii,jj,:] = cl_s_d[pos_i,pos_j,1,:self.bmax+1]
-                Eis_Bjd[ii,jj,:] = cl_s_d[pos_i,pos_j,2,:self.bmax+1]
-                Bis_Ejd[ii,jj,:] = cl_s_d[pos_i,pos_j,3,:self.bmax+1]
-                # foregrounds * observed
-                Eid_Ejo[ii,jj,:] = cl_d_o[pos_i,pos_j,0,:self.bmax+1]
-                Bid_Bjo[ii,jj,:] = cl_d_o[pos_i,pos_j,1,:self.bmax+1]
-                Eid_Bjo[ii,jj,:] = cl_d_o[pos_i,pos_j,2,:self.bmax+1]
-                Bid_Ejo[ii,jj,:] = cl_d_o[pos_i,pos_j,3,:self.bmax+1]
-                Eis_Ejo[ii,jj,:] = cl_s_o[pos_i,pos_j,0,:self.bmax+1]
-                Bis_Bjo[ii,jj,:] = cl_s_o[pos_i,pos_j,1,:self.bmax+1]
-                Eis_Bjo[ii,jj,:] = cl_s_o[pos_i,pos_j,2,:self.bmax+1]
-                Bis_Ejo[ii,jj,:] = cl_s_o[pos_i,pos_j,3,:self.bmax+1]
+                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
+                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
+                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
+                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
+                # dust * dust
+                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
+                # dust * obs
+                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
+                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
+                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
+                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
+                # sync * sync
+                EiEj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_s[ii,jj,:]  = incls['sxs'][freq_j, freq_i, 2, :lmax+1]
+                # sync * obs
+                Eis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 0, :lmax+1]
+                Bis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 1, :lmax+1]
+                Eis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 2, :lmax+1]
+                Bis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 3, :lmax+1]      
+                # sync * dust
+                Eis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 0, :lmax+1]
+                Bis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 1, :lmax+1]
+                Eis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
+                Bis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 3, :lmax+1]
+                
 
-        del cl_o_o, cl_d_d, cl_d_o, cl_s_s, cl_s_o, cl_s_d # free memory
         # bin only once at the end
-        EEo_ij_b   = bin_spec_matrix(EEo_ij_b, self.bin_conf)
-        BBo_ij_b   = bin_spec_matrix(BBo_ij_b, self.bin_conf)
-        EBo_ij_b   = bin_spec_matrix(EBo_ij_b, self.bin_conf)
-        EBd_ij_b   = bin_spec_matrix(EBd_ij_b, self.bin_conf)
-        EBs_ij_b   = bin_spec_matrix(EBs_ij_b, self.bin_conf)
-        EsBd_ij_b  = bin_spec_matrix(EsBd_ij_b, self.bin_conf)
-        EdBs_ij_b  = bin_spec_matrix(EdBs_ij_b, self.bin_conf)
-        EEcmb_ij_b = bin_spec_matrix(EEcmb_ij_b, self.bin_conf)
-        BBcmb_ij_b = bin_spec_matrix(BBcmb_ij_b, self.bin_conf)
+        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
+                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
+                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
+                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
+                          "EBs_ij_b":bin_spec_matrix(EBs_ij_b, self.bin_conf),
+                          "EEcmb_ij_b":bin_spec_matrix(EEcmb_ij_b, self.bin_conf),
+                          "BBcmb_ij_b":bin_spec_matrix(BBcmb_ij_b, self.bin_conf)}
+        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
+                          "C_cmb":self.C_cmb(),
+                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
+                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
+                          "C_sxs":self.C_fgxfg(EiEj_s, BiBj_s, EiBj_s, BiEj_s),
+                          "C_sxo":self.C_fgxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo),
+                          "C_sxd":self.C_sxd(Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)}
+  
+        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
+        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
+        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
+        del EiEj_s, BiBj_s, EiBj_s, BiEj_s
+        del Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo    
+        del Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd
+    
+    def __process_cls_As_Asd_Ad_beta_alpha__(self, incls):
+        lmax   = self.spec.lmax
+        # for the fit
+        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EsBd_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EdBs_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EEcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BBcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        # for the covariance 
+        # observed * observed
+        EiEj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust * dust
+        EiEj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # synch * synch
+        EiEj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiBj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        EiBj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        BiEj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # synch * dust
+        Eis_Ejd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Bjd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eis_Bjd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Ejd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # dust * observed
+        Eid_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eid_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bid_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # synch * observed
+        Eis_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Eis_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        Bis_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # format cls
+        for ii, band_i in enumerate(self.bands):
+            idx_i  = self.inst[band_i]['cl idx']
+            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
+            fwhm_i = self.inst[band_i]['fwhm']
+            for jj, band_j in enumerate(self.bands):
+                idx_j  = self.inst[band_j]['cl idx']
+                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
+                fwhm_j = self.inst[band_j]['fwhm']
+                # for the fit
+                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
+                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
+                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
+                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                EBs_ij_b[ii,jj,:]   = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                EsBd_ij_b[ii,jj,:]  = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
+                EdBs_ij_b[ii,jj,:]  = incls['sxd'][freq_j, freq_i, 3, :lmax+1]
+                EEcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("ee", fwhm_i, fwhm_j, lmax)
+                BBcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("bb", fwhm_i, fwhm_j, lmax)
+                # for the covariance
+                # observed * observed
+                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
+                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
+                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
+                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
+                # dust * dust
+                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
+                # sync * sync
+                EiEj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 0, :lmax+1]
+                BiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 1, :lmax+1]
+                EiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                BiEj_s[ii,jj,:]  = incls['sxs'][freq_j, freq_i, 2, :lmax+1]
+                # sync * dust
+                Eis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 0, :lmax+1]
+                Bis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 1, :lmax+1]
+                Eis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
+                Bis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 3, :lmax+1]
+                # dust * obs
+                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
+                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
+                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
+                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
+                # sync * obs
+                Eis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 0, :lmax+1]
+                Bis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 1, :lmax+1]
+                Eis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 2, :lmax+1]
+                Bis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 3, :lmax+1]    
 
-        
-        To, Tcmb, Ts, Td, TSD, TDS = self.cov_elements_auto(EiEj_o, BiBj_o, EiBj_o, BiEj_o,
-                                                    EiEj_s, BiBj_s, EiBj_s, BiEj_s,
-                                                    EiEj_d, BiBj_d, EiBj_d, BiEj_d,
-                                                    Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd,
-                                                    self.std_i, self.std_j, self.std_h, self.std_k, self.cmb_cls, self.bin_conf, self.bmax)
+        # bin only once at the end
+        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
+                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
+                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
+                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
+                          "EBs_ij_b":bin_spec_matrix(EBs_ij_b, self.bin_conf),
+                          "EsBd_ij_b":bin_spec_matrix(EsBd_ij_b, self.bin_conf),
+                          "EdBs_ij_b":bin_spec_matrix(EdBs_ij_b, self.bin_conf),
+                          "EEcmb_ij_b":bin_spec_matrix(EEcmb_ij_b, self.bin_conf),
+                          "BBcmb_ij_b":bin_spec_matrix(BBcmb_ij_b, self.bin_conf)}
+        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
+                          "C_cmb":self.C_cmb(),
+                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
+                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
+                          "C_sxs":self.C_fgxfg(EiEj_s, BiBj_s, EiBj_s, BiEj_s),
+                          "C_sxo":self.C_fgxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo),
+                          "C_sxd":self.C_sxd(Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_sdxsd":self.C_sdxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s,
+                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_dsxds":self.C_dsxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
+                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_sdxo":self.C_sdxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
+                                               Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
+                          "C_dsxo":self.C_dsxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
+                                               Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
+                          "C_sdxds":self.C_sdxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
+                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_sxsd":self.C_sxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s, Eis_Ejd, 
+                                               Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_sxds":self.C_sxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
+                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_dxsd":self.C_dxsd(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
+                          "C_dxds":self.C_dxds(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)}
+        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
+        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
+        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
+        del EiEj_s, BiBj_s, EiBj_s, BiEj_s
+        del Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo    
+        del Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd
 
-        Ts_o, Td_o, TSD_o, TDS_o = self.cov_elements_cross_o(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo,
-                                                        Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo, self.bin_conf, self.bmax)
-
-        Ts_d, TSD_DS, Ts_SD, Ts_DS, Td_SD, Td_DS = self.cov_elements_cross_fg(EiEj_s, BiBj_s, EiBj_s, BiEj_s,
-                                                                        EiEj_d, BiBj_d, EiBj_d, BiEj_d,
-                                                                        Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd, self.bin_conf, self.bmax)
-        
-        # free memory
-        del EiEj_o, BiBj_o, EiBj_o, BiEj_o
-        del EiEj_d, BiBj_d, EiBj_d, BiEj_d, EiEj_s, BiBj_s, EiBj_s, BiEj_s, Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd
-        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo, Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo
-
-        return None
 
 ###############################################################################    
 ### solve linear system to calculate maximum likelihood solution
@@ -1187,21 +1719,285 @@ class MLE:
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
-    #TODO
     def __linear_system_Ad_alpha__(self, iC, Niter):
-        raise ValueError("Not implemented")
-        return None
+        B_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
+        E_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
+        I_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
+        ####
+        D_ij       = np.zeros((self.Nbands, self.Nbands), dtype=np.float64)
+        H_ij       = np.zeros((self.Nbands, self.Nbands), dtype=np.float64) 
+        sigma_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        omega_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        ####
+        A = 0; R = 0; N = 0
+        for MN_pair in self.MNidx:
+            ii, jj, pp, qq, mm, nn = self.get_index(MN_pair)
+            B_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBo_ij_b'][pp,qq,:])
+            E_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            I_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            ####
+            D_ij[ii,jj]        += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            H_ij[ii,jj]        += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            sigma_ij[ii,jj]    += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            omega_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            ####
+            A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
+            R                  += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            N                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+
+        # build system matrix and independent term
+        sys_mat  = np.zeros((self.Nvar, self.Nvar), dtype=np.float64)
+        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        
+        # variables ordered as Ad, alpha_i
+        sys_mat[0, 0] = R # Ad - Ad  
+        ind_term[0]   = N # Ad
+                
+        for ii, band_i in enumerate(self.bands):
+            idx_i = self.inst[band_i]['alpha idx']
+            
+            # Ad - alpha_i
+            Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
+            sys_mat[0, idx_i+self.ext_par] += 2*Ad_ai; 
+            sys_mat[idx_i+self.ext_par, 0] += 2*Ad_ai
+
+            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:])) # alpha_i
+            for jj, band_j in enumerate(self.bands):
+                idx_j = self.inst[band_j]['alpha idx']
+                # alpha_i - alpha_j terms
+                aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
+                aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
+                aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
+                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+        
+        # solve Ax=B
+        # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
+        ang_now = np.linalg.solve(sys_mat, ind_term)
+        cov_now = np.linalg.inv(sys_mat)
+        std_now = np.sqrt(np.diagonal(cov_now)) 
+        
+        # save results even if something went wrong
+        self.params["ml"][f"Iter {Niter+1}"]         = {"Ad":ang_now[0]}
+        self.params["std fisher"][f"Iter {Niter+1}"] = {"Ad":std_now[0]}
+        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.bands):
+                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+        
+        if np.any( np.isnan(std_now) ):
+            raise StopIteration()
     
-    #TODO
     def __linear_system_As_Ad_alpha__(self, iC, Niter):
-        raise ValueError("Not implemented")
-        return None
-    
-    #TODO
+        B_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        E_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        I_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        #################
+        D_ij       = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        H_ij       = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        nu_ij      = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        sigma_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        psi_ij     = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)  
+        omega_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)   
+        #################
+        A = 0; R = 0; S = 0; J = 0; W = 0; N = 0
+        for MN_pair in self.MNidx:
+            ii, jj, pp, qq, mm, nn = self.get_index(MN_pair)
+            B_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBo_ij_b'][pp,qq,:])
+            E_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            I_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            ####
+            D_ij[ii,jj]        += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            H_ij[ii,jj]        += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            sigma_ij[ii,jj]    += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            omega_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            nu_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            psi_ij[ii,jj]      += np.sum(self.bin_terms['(BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            ####
+            A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
+            R                  += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            N                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            S                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            J                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            W                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+
+        # build system matrix and independent term
+        sys_mat  = np.zeros((self.Nvar, self.Nvar),dtype=np.float64)
+        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        
+        # variables ordered as As, Ad, Asd, beta, alpha_i
+        sys_mat[0, 0] = S                    # As - As
+        sys_mat[0, 1] = W; sys_mat[1, 0] = W # As - Ad
+        ind_term[0]   = J                    # As
+
+        sys_mat[1, 1] = R                    # Ad - Ad
+        ind_term[1]   = N                    # Ad
+        
+        for ii, band_i in enumerate(self.bands):
+            idx_i = self.inst[band_i]['alpha idx']
+            
+            # As - alpha_i 
+            As_ai = np.sum(nu_ij[:,ii]) - np.sum(psi_ij[ii,:])
+            sys_mat[0, idx_i+self.ext_par] += 2*As_ai; sys_mat[idx_i+self.ext_par, 0] += 2*As_ai
+
+            # Ad - alpha_i
+            Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
+            sys_mat[1, idx_i+self.ext_par] += 2*Ad_ai; sys_mat[idx_i+self.ext_par, 1] += 2*Ad_ai
+
+            # alpha_i
+            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
+            
+            for jj, band_j in enumerate(self.bands):
+                idx_j = self.inst[band_j]['alpha idx']
+                # alpha_i - alpha_j terms
+                aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
+                aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
+                aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
+                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+
+        # solve Ax=B
+        # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
+        ang_now = np.linalg.solve(sys_mat, ind_term)
+        cov_now = np.linalg.inv(sys_mat)
+        std_now = np.sqrt(np.diagonal(cov_now)) 
+        
+        # save results even if something went wrong
+        self.params["ml"][f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1]}
+        self.params["std fisher"][f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1]}
+        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.bands):
+                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+        
+        if np.any( np.isnan(std_now) ):
+            raise StopIteration()
+
     def __linear_system_As_Asd_Ad_alpha__(self, iC, Niter):
-        raise ValueError("Not implemented")
-        return None
-    
+        B_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        E_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        I_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        #################
+        D_ij       = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        H_ij       = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        nu_ij      = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        pi_ij      = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        rho_ij     = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        sigma_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        phi_ij     = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        psi_ij     = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)  
+        OMEGA_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)  
+        omega_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64) 
+        #################
+        A = 0; R = 0; S = 0; T = 0; J = 0; M = 0; K = 0; xi = 0 
+        Q = 0; V = 0; W = 0; Z = 0; L = 0; U = 0; N = 0
+        for MN_pair in self.MNidx:
+            ii, jj, pp, qq, mm, nn = self.get_index(MN_pair)
+            B_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBo_ij_b'][pp,qq,:])
+            E_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            I_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            ####
+            D_ij[ii,jj]        += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            H_ij[ii,jj]        += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            sigma_ij[ii,jj]    += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            omega_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            nu_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            pi_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:]) 
+            rho_ij[ii,jj]      += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            phi_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:]) 
+            psi_ij[ii,jj]      += np.sum(self.bin_terms['(BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            OMEGA_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            ####
+            A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
+            R                  += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            N                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            S                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            T                  += np.sum(self.bin_terms['EsBd_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:])
+            J                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            M                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            U                  += np.sum(self.bin_terms['EdBs_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            L                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:])
+            Q                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:])
+            V                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])        
+            W                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            Z                  += np.sum(self.bin_terms['EsBd_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            K                  += np.sum(self.bin_terms['EdBs_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            xi                 += np.sum(self.bin_terms['EsBd_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+
+        # build system matrix and independent term
+        sys_mat  = np.zeros((self.Nvar, self.Nvar),dtype=np.float64)
+        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        
+        # variables ordered as As, Ad, Asd, beta, alpha_i
+        sys_mat[0, 0] = S                             # As - As
+        sys_mat[0, 1] = W      ; sys_mat[1, 0] = W    # As - Ad
+        sys_mat[0, 2] = Q+V    ; sys_mat[2, 0] = Q+V  # As - Asd
+        ind_term[0]   = J                             # As
+
+        sys_mat[1, 1] = R                             # Ad - Ad
+        sys_mat[1, 2] = K+xi   ; sys_mat[2, 1] = K+xi # Ad - Asd
+        ind_term[1]   = N                             # Ad
+        
+        sys_mat[2, 2] = T+U+2*Z                       # Asd - Asd
+        ind_term[2]   = M+L                           # Asd
+                                                  
+        
+        for ii, band_i in enumerate(self.bands):
+            idx_i = self.inst[band_i]['alpha idx']
+            
+            # As - alpha_i 
+            As_ai = np.sum(nu_ij[:,ii]) - np.sum(psi_ij[ii,:])
+            sys_mat[0, idx_i+self.ext_par] += 2*As_ai; sys_mat[idx_i+self.ext_par, 0] += 2*As_ai
+
+            # Ad - alpha_i
+            Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
+            sys_mat[1, idx_i+self.ext_par] += 2*Ad_ai; sys_mat[idx_i+self.ext_par, 1] += 2*Ad_ai
+
+            # Asd - alpha_i
+            Asd_ai = np.sum(pi_ij[:,ii]) + np.sum(rho_ij[:,ii]) - np.sum(phi_ij[ii,:]) - np.sum(OMEGA_ij[ii,:])
+            sys_mat[2, idx_i+self.ext_par] += 2*Asd_ai; sys_mat[idx_i+self.ext_par, 2] += 2*Asd_ai
+
+            # alpha_i
+            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
+            
+            for jj, band_j in enumerate(self.bands):
+                idx_j = self.inst[band_j]['alpha idx']
+                # alpha_i - alpha_j terms
+                aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
+                aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
+                aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
+                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+
+        # solve Ax=B
+        # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
+        ang_now = np.linalg.solve(sys_mat, ind_term)
+        cov_now = np.linalg.inv(sys_mat)
+        std_now = np.sqrt(np.diagonal(cov_now)) 
+        
+        # save results even if something went wrong
+        self.params["ml"][f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1], "Asd":ang_now[2]}
+        self.params["std fisher"][f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1], "Asd":std_now[2]}
+        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.bands):
+                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+        
+        if np.any( np.isnan(std_now) ):
+            raise StopIteration()
+
     def __linear_system_beta_alpha__(self, iC, Niter):
         B_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
         E_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
@@ -1379,18 +2175,126 @@ class MLE:
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
             
-
-    #TODO
     def __linear_system_As_Ad_beta_alpha__(self, iC, Niter):
-        raise ValueError("Not implemented")
-        return None
-    
-    #TODO
+        B_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        E_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        I_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        #################
+        D_ij       = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        H_ij       = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        nu_ij      = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        sigma_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        tau_ij     = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        varphi_ij  = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        psi_ij     = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)  
+        omega_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)  
+        ene_ij     = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)  
+        epsilon_ij = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)  
+        #################
+        A = 0; C = 0; F = 0; G = 0; R = 0; S = 0; J = 0; mu = 0
+        O = 0; P = 0; W = 0; X = 0; Y = 0; N = 0; LAMBDA = 0
+        for MN_pair in self.MNidx:
+            ii, jj, pp, qq, mm, nn = self.get_index(MN_pair)
+            B_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBo_ij_b'][pp,qq,:])
+            E_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            I_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            ####
+            D_ij[ii,jj]        += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            H_ij[ii,jj]        += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            sigma_ij[ii,jj]    += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            tau_ij[ii,jj]      += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:]) 
+            varphi_ij[ii,jj]   += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            omega_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            ene_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:]) 
+            epsilon_ij[ii,jj]  += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            nu_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            psi_ij[ii,jj]      += np.sum(self.bin_terms['(BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            ####
+            A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
+            O                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            P                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            C                  += np.sum(self.bin_terms['EEcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            F                  += np.sum(self.bin_terms['EEcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            G                  += np.sum(self.bin_terms['BBcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            R                  += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            N                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            LAMBDA             += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            mu                 += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            S                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            J                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            W                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            X                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            Y                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+
+        # build system matrix and independent term
+        sys_mat  = np.zeros((self.Nvar, self.Nvar),dtype=np.float64)
+        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        
+        # variables ordered as As, Ad, Asd, beta, alpha_i
+        sys_mat[0, 0] = S                                # As - As
+        sys_mat[0, 1] = W      ; sys_mat[1, 0] = W       # As - Ad
+        sys_mat[0, 2] = 2*(X-Y); sys_mat[2, 0] = 2*(X-Y) # As - beta
+        ind_term[0]   = J                                # As
+
+        sys_mat[1, 1] = R                                            # Ad - Ad
+        sys_mat[1, 2] = 2*(LAMBDA-mu); sys_mat[2, 1] = 2*(LAMBDA-mu) # Ad - beta
+        ind_term[1]   = N                                            # Ad
+        
+        sys_mat[2, 2] = 4*(G+F-2*C) # beta - beta
+        ind_term[2]   = 2*(O-P)     # beta
+        
+        for ii, band_i in enumerate(self.bands):
+            idx_i = self.inst[band_i]['alpha idx']
+            
+            # As - alpha_i 
+            As_ai = np.sum(nu_ij[:,ii]) - np.sum(psi_ij[ii,:])
+            sys_mat[0, idx_i+self.ext_par] += 2*As_ai; sys_mat[idx_i+self.ext_par, 0] += 2*As_ai
+
+            # Ad - alpha_i
+            Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
+            sys_mat[1, idx_i+self.ext_par] += 2*Ad_ai; sys_mat[idx_i+self.ext_par, 1] += 2*Ad_ai
+
+            # beta - alpha_i
+            b_a = np.sum(tau_ij[:,ii]) + np.sum(epsilon_ij[ii,:]) - np.sum(varphi_ij[:,ii]) - np.sum(ene_ij[ii,:])
+            sys_mat[2, idx_i+self.ext_par] += 4*b_a; sys_mat[idx_i+self.ext_par, 2] += 4*b_a
+
+            # alpha_i
+            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
+            
+            for jj, band_j in enumerate(self.bands):
+                idx_j = self.inst[band_j]['alpha idx']
+                # alpha_i - alpha_j terms
+                aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
+                aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
+                aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
+                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+
+        # solve Ax=B
+        # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
+        ang_now = np.linalg.solve(sys_mat, ind_term)
+        cov_now = np.linalg.inv(sys_mat)
+        std_now = np.sqrt(np.diagonal(cov_now)) 
+        
+        # save results even if something went wrong
+        self.params["ml"][f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1], "beta":ang_now[2]}
+        self.params["std fisher"][f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1], "beta":std_now[2]}
+        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.bands):
+                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+        
+        if np.any( np.isnan(std_now) ):
+            raise StopIteration()
+
     def __linear_system_As_Asd_Ad_beta_alpha__(self, iC, Niter):
-        raise ValueError("Not implemented")
-        B_ijpq = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
-        E_ijpq = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
-        I_ijpq = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        B_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        E_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
+        I_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         #################
         D_ij       = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
         H_ij       = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
@@ -1411,105 +2315,130 @@ class MLE:
         O  = 0; P   = 0; Q     = 0; V      = 0; W  = 0; X = 0; Y = 0; Z = 0; DELTA = 0 
         xi = 0; eta = 0; theta = 0; LAMBDA = 0; mu = 0; L = 0; U = 0; N = 0; delta = 0
         for MN_pair in self.MNidx:
-            ii,jj,pp,qq,mm,nn = self.get_index(MN_pair)
-            B_ijpq[ii,jj,pp,qq] = np.sum(BBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBo_ij_b[pp,qq,:])
-            E_ijpq[ii,jj,pp,qq] = np.sum(EEo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEo_ij_b[pp,qq,:])
-            I_ijpq[ii,jj,pp,qq] = np.sum(BBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEo_ij_b[pp,qq,:])
-            #################
-            D_ij[ii,jj]       += np.sum(EEo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBo_ij_b[pp,qq,:])
-            H_ij[ii,jj]       += np.sum(BBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBo_ij_b[pp,qq,:])
-            nu_ij[ii,jj]      += np.sum(EEo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBs_ij_b[pp,qq,:])
-            pi_ij[ii,jj]      += np.sum(EEo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EsBd_ij_b[pp,qq,:]) 
-            rho_ij[ii,jj]     += np.sum(EEo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EdBs_ij_b[pp,qq,:])
-            sigma_ij[ii,jj]   += np.sum(EEo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBd_ij_b[pp,qq,:])
-            tau_ij[ii,jj]     += np.sum(EEo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEcmb_ij_b[pp,qq,:]) 
-            varphi_ij[ii,jj]  += np.sum(EEo_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBcmb_ij_b[pp,qq,:])
-            phi_ij[ii,jj]     += np.sum(BBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EsBd_ij_b[pp,qq,:]) 
-            psi_ij[ii,jj]     += np.sum(BBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBs_ij_b[pp,qq,:])
-            OMEGA_ij[ii,jj]   += np.sum(BBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EdBs_ij_b[pp,qq,:])
-            omega_ij[ii,jj]   += np.sum(BBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBd_ij_b[pp,qq,:])
-            ene_ij[ii,jj]     += np.sum(BBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEcmb_ij_b[pp,qq,:]) 
-            epsilon_ij[ii,jj] += np.sum(BBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBcmb_ij_b[pp,qq,:])
-            #################
-            A      += np.sum(EBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBo_ij_b[pp,qq,:]) 
-            C      += np.sum(EEcmb_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBcmb_ij_b[pp,qq,:])
-            F      += np.sum(EEcmb_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEcmb_ij_b[pp,qq,:])
-            G      += np.sum(BBcmb_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBcmb_ij_b[pp,qq,:])
-            R      += np.sum(EBd_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBd_ij_b[pp,qq,:])
-            S      += np.sum(EBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBs_ij_b[pp,qq,:])
-            T      += np.sum(EsBd_ij_b[ii,jj,:]*invcov[:,mm,nn]*EsBd_ij_b[pp,qq,:])
-            J      += np.sum(EBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBs_ij_b[pp,qq,:])
-            M      += np.sum(EBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EdBs_ij_b[pp,qq,:])
-            N      += np.sum(EBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBd_ij_b[pp,qq,:])
-            U      += np.sum(EdBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*EdBs_ij_b[pp,qq,:])
-            L      += np.sum(EBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EsBd_ij_b[pp,qq,:])
-            O      += np.sum(EBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEcmb_ij_b[pp,qq,:])
-            P      += np.sum(EBo_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBcmb_ij_b[pp,qq,:])
-            Q      += np.sum(EBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*EsBd_ij_b[pp,qq,:])
-            V      += np.sum(EBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*EdBs_ij_b[pp,qq,:])        
-            W      += np.sum(EBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBd_ij_b[pp,qq,:])
-            X      += np.sum(EBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEcmb_ij_b[pp,qq,:])
-            Y      += np.sum(EBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBcmb_ij_b[pp,qq,:])
-            Z      += np.sum(EsBd_ij_b[ii,jj,:]*invcov[:,mm,nn]*EdBs_ij_b[pp,qq,:])
-            K      += np.sum(EdBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBd_ij_b[pp,qq,:])
-            DELTA  += np.sum(EsBd_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEcmb_ij_b[pp,qq,:])
-            delta  += np.sum(EsBd_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBcmb_ij_b[pp,qq,:])
-            xi     += np.sum(EsBd_ij_b[ii,jj,:]*invcov[:,mm,nn]*EBd_ij_b[pp,qq,:])
-            eta    += np.sum(EdBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEcmb_ij_b[pp,qq,:])
-            theta  += np.sum(EdBs_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBcmb_ij_b[pp,qq,:])
-            LAMBDA += np.sum(EBd_ij_b[ii,jj,:]*invcov[:,mm,nn]*EEcmb_ij_b[pp,qq,:])
-            mu     += np.sum(EBd_ij_b[ii,jj,:]*invcov[:,mm,nn]*BBcmb_ij_b[pp,qq,:])
+            ii, jj, pp, qq, mm, nn = self.get_index(MN_pair)
+            B_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBo_ij_b'][pp,qq,:])
+            E_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            I_ijpq[ii,jj,pp,qq] = np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEo_ij_b'][pp,qq,:])
+            ####
+            D_ij[ii,jj]        += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            H_ij[ii,jj]        += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:])
+            sigma_ij[ii,jj]    += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            tau_ij[ii,jj]      += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:]) 
+            varphi_ij[ii,jj]   += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            omega_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            ene_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:]) 
+            epsilon_ij[ii,jj]  += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            nu_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            pi_ij[ii,jj]       += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:]) 
+            rho_ij[ii,jj]      += np.sum(self.bin_terms['EEo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            phi_ij[ii,jj]      += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:]) 
+            psi_ij[ii,jj]      += np.sum(self.bin_terms['(BBo_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            OMEGA_ij[ii,jj]    += np.sum(self.bin_terms['BBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            ####
+            A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBo_ij_b'][pp,qq,:]) 
+            O                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            P                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            C                  += np.sum(self.bin_terms['EEcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            F                  += np.sum(self.bin_terms['EEcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            G                  += np.sum(self.bin_terms['BBcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            R                  += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            N                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            LAMBDA             += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            mu                 += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            S                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            T                  += np.sum(self.bin_terms['EsBd_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:])
+            J                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBs_ij_b'][pp,qq,:])
+            M                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            U                  += np.sum(self.bin_terms['EdBs_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            L                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:])
+            Q                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EsBd_ij_b'][pp,qq,:])
+            V                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])        
+            W                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            X                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            Y                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            Z                  += np.sum(self.bin_terms['EsBd_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EdBs_ij_b'][pp,qq,:])
+            K                  += np.sum(self.bin_terms['EdBs_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            DELTA              += np.sum(self.bin_terms['EsBd_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            delta              += np.sum(self.bin_terms['EsBd_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+            xi                 += np.sum(self.bin_terms['EsBd_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
+            eta                += np.sum(self.bin_terms['EdBs_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
+            theta              += np.sum(self.bin_terms['EdBs_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
+
 
         # build system matrix and independent term
         sys_mat  = np.zeros((self.Nvar, self.Nvar),dtype=np.float64)
         ind_term = np.zeros(self.Nvar, dtype=np.float64)
         
         # variables ordered as As, Ad, Asd, beta, alpha_i
-        sys_mat[0,0] = S      ; ind_term[0]  = J # As - As
-        sys_mat[0,1] = W      ; sys_mat[1,0] = W # As - Ad
-        sys_mat[0,2] = Q+V    ; sys_mat[2,0] = Q+V # As - Asd
-        sys_mat[0,3] = 2*(X-Y); sys_mat[3,0] = 2*(X-Y) # As - beta
+        sys_mat[0, 0] = S                                # As - As
+        sys_mat[0, 1] = W      ; sys_mat[1, 0] = W       # As - Ad
+        sys_mat[0, 2] = Q+V    ; sys_mat[2, 0] = Q+V     # As - Asd
+        sys_mat[0, 3] = 2*(X-Y); sys_mat[3, 0] = 2*(X-Y) # As - beta
+        ind_term[0]   = J                                # As
 
-        sys_mat[1,1] = R            ; ind_term[1]  = N # Ad - Ad
-        sys_mat[1,2] = K+xi         ; sys_mat[2,1] = K+xi # Ad - Asd
-        sys_mat[1,3] = 2*(LAMBDA-mu); sys_mat[3,1] = 2*(LAMBDA-mu) # Ad - beta
-
-        sys_mat[2,2] = T+U+2*Z                  ; ind_term[2] = M+L # Asd - Asd
-        sys_mat[2,3] = 2*(DELTA-delta+eta-theta); sys_mat[3,2] = 2*(DELTA-delta+eta-theta) # Asd - beta
-
-        sys_mat[3,3] = 4*(G+F-2*C); ind_term[3] = 2*(O-P)# beta - beta
-
-        for aa in range(0, self.Nbands, 1):
-            # As - alpha_i
-            As_ai = np.sum(nu_ij[:,aa]) - np.sum(psi_ij[aa,:])
-            sys_mat[0,aa+self.ExtParam] = 2*As_ai; sys_mat[aa+self.ExtParam,0] = 2*As_ai
+        sys_mat[1, 1] = R                                            # Ad - Ad
+        sys_mat[1, 2] = K+xi         ; sys_mat[2, 1] = K+xi          # Ad - Asd
+        sys_mat[1, 3] = 2*(LAMBDA-mu); sys_mat[3, 1] = 2*(LAMBDA-mu) # Ad - beta
+        ind_term[1]   = N                                            # Ad
+        
+        sys_mat[2, 2] = T+U+2*Z                                                              # Asd - Asd
+        sys_mat[2, 3] = 2*(DELTA-delta+eta-theta); sys_mat[3, 2] = 2*(DELTA-delta+eta-theta) # Asd - beta
+        ind_term[2]   = M+L                                                                  # Asd
+                                                           
+        sys_mat[3, 3] = 4*(G+F-2*C) # beta - beta
+        ind_term[3]   = 2*(O-P)     # beta
+        
+        for ii, band_i in enumerate(self.bands):
+            idx_i = self.inst[band_i]['alpha idx']
+            
+            # As - alpha_i 
+            As_ai = np.sum(nu_ij[:,ii]) - np.sum(psi_ij[ii,:])
+            sys_mat[0, idx_i+self.ext_par] += 2*As_ai; sys_mat[idx_i+self.ext_par, 0] += 2*As_ai
 
             # Ad - alpha_i
-            Ad_ai = np.sum(sigma_ij[:,aa]) - np.sum(omega_ij[aa,:])
-            sys_mat[1,aa+self.ExtParam] = 2*Ad_ai; sys_mat[aa+self.ExtParam,1] = 2*Ad_ai
+            Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
+            sys_mat[1, idx_i+self.ext_par] += 2*Ad_ai; sys_mat[idx_i+self.ext_par, 1] += 2*Ad_ai
 
             # Asd - alpha_i
-            Asd_ai = np.sum(pi_ij[:,aa]) + np.sum(rho_ij[:,aa]) - np.sum(phi_ij[aa,:]) - np.sum(OMEGA_ij[aa,:])
-            sys_mat[2,aa+self.ExtParam] = 2*Asd_ai; sys_mat[aa+self.ExtParam,2] = 2*Asd_ai
+            Asd_ai = np.sum(pi_ij[:,ii]) + np.sum(rho_ij[:,ii]) - np.sum(phi_ij[ii,:]) - np.sum(OMEGA_ij[ii,:])
+            sys_mat[2, idx_i+self.ext_par] += 2*Asd_ai; sys_mat[idx_i+self.ext_par, 2] += 2*Asd_ai
 
             # beta - alpha_i
-            b_a = np.sum(tau_ij[:,aa]) + np.sum(epsilon_ij[aa,:]) - np.sum(varphi_ij[:,aa]) - np.sum(ene_ij[aa,:])
-            sys_mat[3,aa+self.ExtParam] = 4*b_a; sys_mat[aa+self.ExtParam,3] = 4*b_a
+            b_a = np.sum(tau_ij[:,ii]) + np.sum(epsilon_ij[ii,:]) - np.sum(varphi_ij[:,ii]) - np.sum(ene_ij[ii,:])
+            sys_mat[3, idx_i+self.ext_par] += 4*b_a; sys_mat[idx_i+self.ext_par, 3] += 4*b_a
 
             # alpha_i
-            ind_term[aa+self.ExtParam] = 2*(np.sum(D_ij[:,aa]) - np.sum(H_ij[aa,:]))
-            for bb in range(0, self.Nbands, 1):
+            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
+            
+            for jj, band_j in enumerate(self.bands):
+                idx_j = self.inst[band_j]['alpha idx']
                 # alpha_i - alpha_j terms
-                aux1 = np.sum(E_ijpq[:, bb, :, aa]) + np.sum(E_ijpq[:, aa, :, bb])
-                aux2 = np.sum(B_ijhk[bb, :, aa, :]) + np.sum(B_ijhk[aa, :, bb, :])
-                aux3 = np.sum(I_ijpq[bb, :, :, aa]) + np.sum(I_ijpq[aa, :, :, bb])
-                sys_mat[aa+self.ExtParam,bb+self.ExtParam] = 2*( aux1 + aux2 - 2*aux3 )
+                aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
+                aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
+                aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
+                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
 
-        #solve Ax=B
+        # solve Ax=B
+        # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
         ang_now = np.linalg.solve(sys_mat, ind_term)
         cov_now = np.linalg.inv(sys_mat)
-        std_now = np.sqrt(np.diagonal(cov_now))
-        return None
+        std_now = np.sqrt(np.diagonal(cov_now)) 
+        
+        # save results even if something went wrong
+        self.params["ml"][f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1], "Asd":ang_now[2],"beta":ang_now[3]}
+        self.params["std fisher"][f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1], "Asd":std_now[2],"beta":std_now[3]}
+        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.bands):
+                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
+                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+        
+        if np.any( np.isnan(std_now) ):
+            raise StopIteration()
 
 ###############################################################################    
         
