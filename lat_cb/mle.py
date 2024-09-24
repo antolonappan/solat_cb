@@ -69,23 +69,105 @@ def bin_cov_matrix(cov, info):
     return np.sum(w_array[ib_grid,il_grid]**2*cov[:,:,:,ell_array[ib_grid,il_grid]], axis=4)
 
 
+class Result:
+    
+    def __init__(self, spec, fit, sim, 
+                 alpha_per_split, rm_same_tube,
+                 binwidth, bmin, bmax):
+
+        # information I should record to remember how the result was calculated
+        # information about the spectra
+        self.specdir  = spec.lat.libdir
+        self.temp_bp  = spec.temp_bp
+        self.aposcale = spec.aposcale
+        self.CO       = spec.CO
+        self.PS       = spec.PS
+        self.pureB    = spec.pureB
+        self.nside    = spec.nside
+        self.fsky     = spec.fsky
+        self.sim_idx  = sim 
+        # information about the fit
+        self.nlb             = binwidth
+        self.bmin            = bmin
+        self.bmax            = bmax
+        self.fit             = fit
+        self.rm_same_tube    = rm_same_tube
+        self.alpha_per_split = alpha_per_split
+        # parameters to calculate
+        self.ml         = {}
+        self.std_fisher = {}
+        self.cov_fisher = {"Iter 0":None }
+        self.variables  = ''
+        if fit=="alpha":
+            ext_par = 0
+            # add them later once you know how many are there
+            self.ml["Iter 0"]         = {}
+            self.std_fisher["Iter 0"] = {}
+        elif fit=="Ad + alpha":
+            ext_par = 1
+            self.ml["Iter 0"]         = { 'Ad':1.0  } 
+            self.std_fisher["Iter 0"] = { 'Ad':None }
+            self.variables           += 'Ad'
+        elif fit=="beta + alpha":
+            ext_par = 1
+            self.ml["Iter 0"]         = { 'beta':0.0  }
+            self.std_fisher["Iter 0"] = { 'beta':None }
+            self.variables           += 'beta'
+        elif fit=="As + Ad + alpha":
+            ext_par = 2
+            self.ml["Iter 0"]         = { 'As':1.0,  'Ad':1.0  }
+            self.std_fisher["Iter 0"] = { 'As':None, 'Ad':None }
+            self.variables           += 'As, Ad'
+        elif fit=="Ad + beta + alpha":
+            ext_par = 2
+            self.ml["Iter 0"]         = { 'Ad':1.0,  'beta':0.0}
+            self.std_fisher["Iter 0"] = { 'Ad':None, 'beta':0.0 }
+            self.variables           += 'Ad, beta'
+        elif fit=="As + Ad + beta + alpha":
+            ext_par = 3
+            self.ml["Iter 0"]         = { 'As':1.0, 'Ad':1.0, 'beta':0.0  }
+            self.std_fisher["Iter 0"] = { 'As':None,'Ad':None,'beta':None }
+            self.variables           += 'As, Ad, beta'
+        elif fit=="As + Asd + Ad + alpha":
+            ext_par = 3
+            self.ml["Iter 0"]         = { 'As':1.0,  'Asd':1.0,  'Ad':1.0 }
+            self.std_fisher["Iter 0"] = { 'As':None, 'Asd':None, 'Ad':None}
+            self.variables           += 'As, Asd, Ad' 
+        elif fit=="As + Asd + Ad + beta + alpha":
+            ext_par = 4
+            self.ml["Iter 0"]         = { 'As':1.0, 'Asd':1.0,  'Ad':1.0, 'beta':0.0 }
+            self.std_fisher["Iter 0"] = { 'As':None,'Asd':None, 'Ad':None,'beta':None }
+            self.variables           += 'As, Asd, Ad, beta'
+            
+        if alpha_per_split:
+            self.Nalpha = spec.Nbands
+            for ii, band in enumerate(spec.bands):
+                self.ml["Iter 0"][band]         = 0.0
+                self.std_fisher["Iter 0"][band] = None
+                self.variables                 += f'{band}'if (ii==0 and fit=="alpha") else f', {band}'
+        else:
+            self.Nalpha = spec.Nfreq
+            for ii, freq in enumerate(spec.freqs):
+                self.ml["Iter 0"][freq]         = 0.0
+                self.std_fisher["Iter 0"][freq] = None
+                self.variables                 += f'{freq}'if (ii==0 and fit=="alpha") else f', {freq}'
+
+        self.ext_par = ext_par
+        self.Nvar    = self.Nalpha + self.ext_par
+        
+      
+########################################################################3       
+
 class MLE:
     fit_options = ["alpha", "Ad + alpha", "As + Ad + alpha", "As + Asd + Ad + alpha",
                    "beta + alpha", "Ad + beta + alpha", "As + Ad + beta + alpha","As + Asd + Ad + beta + alpha"]
     
-    def __init__(self, libdir, spec_lib, fit, sim, 
+    def __init__(self, libdir, spec_lib, fit, #sim,
                  alpha_per_split=False,
                  rm_same_tube=False,
                  binwidth=20, bmin=51, bmax=1000):
         self.niter_max = 100
-        self.tol       = 0.5 # arcmin
-        #TODO PDP: The estimator should be linked to a specific simulation
-        # I feel like this is more practical for analysing results after computing them
-        # Creating a new instance of MLE takes 42.6 ms in my laptop
-        # so creating a new object per simulation is not going to produce much overhead
-        # The other option is creating a 'Results' object that handles the access to variables
-        # in the dictionary
-        self.sim_idx   = sim      
+        self.tol       = 0.5 # arcmin  
         self.spec      = spec_lib
         self.libdir    = self.spec.lat.libdir+'/mle'
         os.makedirs(self.libdir, exist_ok=True)
@@ -118,73 +200,18 @@ class MLE:
         # parameters to calculate
         assert fit in self.fit_options, f"fit must be one of {self.fit_options}"
         self.fit    = fit
-        self.params = {"ml":{},
-                       "std fisher":{},
-                       "cov fisher":{ "Iter 0":None },
-                       "variables":''}
-        ext_par     = None
-        if self.fit=="alpha":
-            # add them later once you know how many are there
-            self.params["ml"]["Iter 0"]         = {}
-            self.params["std fisher"]["Iter 0"] = {}
-            ext_par = 0
-        elif self.fit=="Ad + alpha":
-            ext_par = 1
-            self.params["ml"]["Iter 0"]         = { 'Ad':1.0  } 
-            self.params["std fisher"]["Iter 0"] = { 'Ad':None }
-            self.params["variables"]           += 'Ad'
-        elif self.fit=="beta + alpha":
-            ext_par = 1
-            self.params["ml"]["Iter 0"]         = { 'beta':0.0  }
-            self.params["std fisher"]["Iter 0"] = { 'beta':None }
-            self.params["variables"]           += 'beta'
-        elif self.fit=="As + Ad + alpha":
-            ext_par = 2
-            self.params["ml"]["Iter 0"]         = { 'As':1.0,  'Ad':1.0  }
-            self.params["std fisher"]["Iter 0"] = { 'As':None, 'Ad':None }
-            self.params["variables"]           += 'As, Ad'
-        elif self.fit=="Ad + beta + alpha":
-            ext_par = 2
-            self.params["ml"]["Iter 0"]         = { 'Ad':1.0,  'beta':0.0}
-            self.params["std fisher"]["Iter 0"] = { 'Ad':None, 'beta':0.0 }
-            self.params["variables"]           += 'Ad, beta'
-        elif self.fit=="As + Ad + beta + alpha":
-            ext_par = 3
-            self.params["ml"]["Iter 0"]         = { 'As':1.0, 'Ad':1.0, 'beta':0.0  }
-            self.params["std fisher"]["Iter 0"] = { 'As':None,'Ad':None,'beta':None }
-            self.params["variables"]           += 'As, Ad, beta'
-        elif self.fit=="As + Asd + Ad + alpha":
-            ext_par = 3
-            self.params["ml"]["Iter 0"]         = { 'As':1.0,  'Asd':1.0,  'Ad':1.0 }
-            self.params["std fisher"]["Iter 0"] = { 'As':None, 'Asd':None, 'Ad':None}
-            self.params["variables"]           += 'As, Asd, Ad' 
-        elif self.fit=="As + Asd + Ad + beta + alpha":
-            ext_par = 4
-            self.params["ml"]["Iter 0"]         = { 'As':1.0, 'Asd':1.0,  'Ad':1.0, 'beta':0.0 }
-            self.params["std fisher"]["Iter 0"] = { 'As':None,'Asd':None, 'Ad':None,'beta':None }
-            self.params["variables"]           += 'As, Asd, Ad, beta'
-        self.ext_par         = ext_par
         self.alpha_per_split = alpha_per_split
         if alpha_per_split:
             print("Fitting a different polarisation angle per split")
-            self.Nalpha = self.Nbands
             for ii, band in enumerate(self.bands):
-                self.params["ml"]["Iter 0"][band]         = 0.0
-                self.params["std fisher"]["Iter 0"][band] = None
-                self.params["variables"]                 += f'{band}'if (ii==0 and self.fit=="alpha") else f', {band}'
                 self.inst[band]["alpha idx"]              = ii
         else:
             print("Fitting a common polarisation angle per frequency")
-            self.Nalpha = self.spec.Nfreq
             counter = 0
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"]["Iter 0"][freq]         = 0.0
-                self.params["std fisher"]["Iter 0"][freq] = None
-                self.params["variables"]                 += f'{freq}'if (ii==0 and self.fit=="alpha") else f', {freq}'
                 for split in range(self.spec.lat.nsplits):
                      self.inst[f'{freq}-{split+1}']["alpha idx"] = counter
                 counter += 1
-        self.Nvar = self.Nalpha + self.ext_par
         
         self.rm_same_tube = rm_same_tube
         if self.rm_same_tube:
@@ -245,52 +272,50 @@ class MLE:
         #pixel window function is squared because both are polarization fields
         return self.cmb_cls[mode][:lmax+1]*bl*pwf**2
 
-    def __get_alpha_blocks__(self, Niter):
+    def __get_alpha_blocks__(self, Niter, res):
         alphas = np.zeros(self.Nbands, dtype=np.float64)
         for band in self.bands:
-            alphas[self.inst[band]['cl idx']] = self.params["ml"][f"Iter {Niter}"][band if self.alpha_per_split else band[:-2]]
+            alphas[self.inst[band]['cl idx']] = res.ml[f"Iter {Niter}"][band if self.alpha_per_split else band[:-2]]
         return alphas[self.MNi], alphas[self.MNj], alphas[self.MNp], alphas[self.MNq]
 
-    def __get_ml_alphas__(self, Niter, add_beta=False):
-        
-        alphas = np.zeros(self.Nalpha, dtype=np.float64)
+    def __get_ml_alphas__(self, Niter, res, add_beta=False):
+        alphas = np.zeros(res.Nalpha, dtype=np.float64)
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                alphas[ii] = self.params["ml"][f"Iter {Niter}"][band]
+                alphas[ii] = res.ml[f"Iter {Niter}"][band]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                alphas[ii] = self.params["ml"][f"Iter {Niter}"][freq]
+                alphas[ii] = res.ml[f"Iter {Niter}"][freq]
                 
         if add_beta:
-            alphas += self.params["ml"][f"Iter {Niter}"]['beta']
-            
+            alphas += res.ml[f"Iter {Niter}"]['beta']
         return alphas
 
 
 ############################################################################### 
 ### Combination of covariance matrix elements
  
-    def build_cov(self, Niter): 
+    def build_cov(self, Niter, res): 
         if self.fit=="alpha":
-            return self.__cov_alpha__(Niter)
+            return self.__cov_alpha__(Niter, res)
         elif self.fit=="Ad + alpha":
-            return self.__cov_Ad_alpha__(Niter) 
+            return self.__cov_Ad_alpha__(Niter, res) 
         elif self.fit=="beta + alpha":
-            return self.__cov_beta_alpha__(Niter)
+            return self.__cov_beta_alpha__(Niter, res)
         elif self.fit=="As + Ad + alpha":
-            return self.__cov_As_Ad_alpha__(Niter)
+            return self.__cov_As_Ad_alpha__(Niter, res)
         elif self.fit=="Ad + beta + alpha":
-            return self.__cov_Ad_beta_alpha__(Niter)
+            return self.__cov_Ad_beta_alpha__(Niter, res)
         elif self.fit=="As + Ad + beta + alpha":
-            return self.__cov_As_Ad_beta_alpha__(Niter)
+            return self.__cov_As_Ad_beta_alpha__(Niter, res)
         elif self.fit=="As + Asd + Ad + alpha":
-            return self.__cov_As_Asd_Ad_alpha__(Niter)
+            return self.__cov_As_Asd_Ad_alpha__(Niter, res)
         elif self.fit=="As + Asd + Ad + beta + alpha":
-            return self.__cov_As_Asd_Ad_beta_alpha__(Niter)
+            return self.__cov_As_Asd_Ad_beta_alpha__(Niter, res)
       
-    def __cov_alpha__(self, Niter):     
+    def __cov_alpha__(self, Niter, res):     
         # get parameters for this iteration
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)  
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)  
         # trigonometric factors rotating the spectra
         c4ij = np.cos(4*ai)+np.cos(4*aj)
         c4pq = np.cos(4*ap)+np.cos(4*aq)
@@ -301,10 +326,10 @@ class MLE:
         # observed * observed; remove all EB except the one in T0
         return To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:]
 
-    def __cov_Ad_alpha__(self, Niter):
+    def __cov_Ad_alpha__(self, Niter, res):
         # get parameters for this iteration
-        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
         # trigonometric factors rotating the spectra
         cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
         sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
@@ -325,11 +350,11 @@ class MLE:
         cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
         return cov
     
-    def __cov_As_Ad_alpha__(self, Niter):
+    def __cov_As_Ad_alpha__(self, Niter, res):
         # get parameters for this iteration
-        As   = self.params["ml"][f"Iter {Niter}"]["As"]
-        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        As   = res.ml[f"Iter {Niter}"]["As"]
+        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
         # trigonometric factors rotating the spectra
         cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
         sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
@@ -360,12 +385,12 @@ class MLE:
         cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
         return cov
     
-    def __cov_As_Asd_Ad_alpha__(self, Niter):
+    def __cov_As_Asd_Ad_alpha__(self, Niter, res):
         # get parameters for this iteration
-        As   = self.params["ml"][f"Iter {Niter}"]["As"]
-        Asd  = self.params["ml"][f"Iter {Niter}"]["Asd"]
-        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        As   = res.ml[f"Iter {Niter}"]["As"]
+        Asd  = res.ml[f"Iter {Niter}"]["Asd"]
+        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
         # trigonometric factors rotating the spectra
         cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
         sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
@@ -429,10 +454,10 @@ class MLE:
         cov += - Dij*Asd*TDS_o[0,:,:,:] - Dpq*Asd*TDS_o[1,:,:,:] - Eij*Asd*TDS_o[2,:,:,:] - Epq*Asd*TDS_o[3,:,:,:]
         return cov
 
-    def __cov_beta_alpha__(self, Niter):
+    def __cov_beta_alpha__(self, Niter, res):
         # get parameters for this iteration
-        beta = self.params["ml"][f"Iter {Niter}"]["beta"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        beta = res.ml[f"Iter {Niter}"]["beta"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
         # trigonometric factors rotating the spectra
         c4ij = np.cos(4*ai)+np.cos(4*aj)
         c4pq = np.cos(4*ap)+np.cos(4*aq)
@@ -449,11 +474,11 @@ class MLE:
         cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
         return cov
     
-    def __cov_Ad_beta_alpha__(self, Niter):
+    def __cov_Ad_beta_alpha__(self, Niter, res):
         # get parameters for this iteration
-        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
-        beta = self.params["ml"][f"Iter {Niter}"]["beta"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
+        beta = res.ml[f"Iter {Niter}"]["beta"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
         # trigonometric factors rotating the spectra
         cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
         sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
@@ -479,54 +504,11 @@ class MLE:
         cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
         return cov
     
-    def __cov_As_Ad_beta_alpha__(self, Niter):
-        # get parameters for this iteration
-        As   = self.params["ml"][f"Iter {Niter}"]["As"]
-        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
-        beta = self.params["ml"][f"Iter {Niter}"]["beta"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
-        # trigonometric factors rotating the spectra
-        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
-        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
-        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
-        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
-        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
-        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
-        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq
-        Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
-        Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq))        
-        # covariance elements
-        To   = np.copy(self.cov_terms['C_oxo'])
-        Tcmb = np.copy(self.cov_terms['C_cmb'])
-        Td   = np.copy(self.cov_terms['C_dxd'])
-        Ts   = np.copy(self.cov_terms['C_sxs'])
-        Ts_d = np.copy(self.cov_terms['C_sxd'])
-        Td_o = np.copy(self.cov_terms['C_dxo'])
-        Ts_o = np.copy(self.cov_terms['C_sxo'])
-        # observed * observed; remove all EB except the one in T0
-        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
-        # cmb * cmb + cmb * observed
-        cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
-        # dust * dust; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
-        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
-        # synch * synch; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
-        # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
-        # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
-        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
-        return cov
-    
-    def __cov_As_Asd_Ad_beta_alpha__(self, Niter):
-        # get parameters for this iteration
-        As   = self.params["ml"][f"Iter {Niter}"]["As"]
-        Asd  = self.params["ml"][f"Iter {Niter}"]["Asd"]
-        Ad   = self.params["ml"][f"Iter {Niter}"]["Ad"]
-        beta = self.params["ml"][f"Iter {Niter}"]["beta"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter)
+    def __cov_As_Ad_beta_alpha__(self, Niter, res):
+        As   = res.ml[f"Iter {Niter}"]["As"]
+        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
+        beta = res.ml[f"Iter {Niter}"]["beta"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
         # trigonometric factors rotating the spectra
         cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
         sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
@@ -537,6 +519,49 @@ class MLE:
         Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq
         Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
         Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq))   
+        # covariance elements
+        To     = np.copy(self.cov_terms['C_oxo'])
+        Tcmb   = np.copy(self.cov_terms['C_cmb'])
+        Td     = np.copy(self.cov_terms['C_dxd'])
+        Ts     = np.copy(self.cov_terms['C_sxs'])
+        Ts_d   = np.copy(self.cov_terms['C_sxd'])
+        Td_o   = np.copy(self.cov_terms['C_dxo'])
+        Ts_o   = np.copy(self.cov_terms['C_sxo'])
+        # covariance elements
+        # observed * observed; remove all EB except the one in T0
+        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
+        # cmb * cmb + cmb * observed
+        cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
+        # synch * synch; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
+        # dust * dust; remove EB from T1, T2, T3
+        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
+        # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
+        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
+        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
+        # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
+        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
+        return cov
+
+    def __cov_As_Asd_Ad_beta_alpha__(self, Niter, res):
+        # get parameters for this iteration
+        As   = res.ml[f"Iter {Niter}"]["As"]
+        Asd  = res.ml[f"Iter {Niter}"]["Asd"]
+        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
+        beta = res.ml[f"Iter {Niter}"]["beta"]
+        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
+        # trigonometric factors rotating the spectra
+        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
+        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
+        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
+        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
+        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
+        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
+        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq 
+        Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
+        Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq)) 
         # covariance elements
         To     = np.copy(self.cov_terms['C_oxo'])
         Tcmb   = np.copy(self.cov_terms['C_cmb'])
@@ -594,7 +619,8 @@ class MLE:
         # dust-synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
         cov += - Dij*Asd*TDS_o[0,:,:,:] - Dpq*Asd*TDS_o[1,:,:,:] - Eij*Asd*TDS_o[2,:,:,:] - Epq*Asd*TDS_o[3,:,:,:]
         return cov
-
+    
+    
 ###############################################################################
 ### Calculation of covariance matrix elements
 
@@ -1619,25 +1645,25 @@ class MLE:
 #TODO PDP: these ones can be further optimised but I'm leaving them like this
 # for now to debug the new code structure first
 
-    def solve_linear_system(self, iC, Niter):
+    def solve_linear_system(self, iC, Niter, res):
         if self.fit=="alpha":
-            return self.__linear_system_alpha__(iC, Niter)
+            return self.__linear_system_alpha__(iC, Niter, res)
         elif self.fit=="Ad + alpha":
-            return self.__linear_system_Ad_alpha__(iC, Niter) 
+            return self.__linear_system_Ad_alpha__(iC, Niter, res) 
         elif self.fit=="beta + alpha":
-            return self.__linear_system_beta_alpha__(iC, Niter)
+            return self.__linear_system_beta_alpha__(iC, Niter, res)
         elif self.fit=="As + Ad + alpha":
-            return self.__linear_system_As_Ad_alpha__(iC, Niter)
+            return self.__linear_system_As_Ad_alpha__(iC, Niter, res)
         elif self.fit=="Ad + beta + alpha":
-            return self.__linear_system_Ad_beta_alpha__(iC, Niter)
+            return self.__linear_system_Ad_beta_alpha__(iC, Niter, res)
         elif self.fit=="As + Ad + beta + alpha":
-            return self.__linear_system_As_Ad_beta_alpha__(iC, Niter)
+            return self.__linear_system_As_Ad_beta_alpha__(iC, Niter, res)
         elif self.fit=="As + Asd + Ad + alpha":
-            return self.__linear_system_As_Asd_Ad_alpha__(iC, Niter)
+            return self.__linear_system_As_Asd_Ad_alpha__(iC, Niter, res)
         elif self.fit=="As + Asd + Ad + beta + alpha":
-            return self.__linear_system_As_Asd_Ad_beta_alpha__(iC, Niter)
+            return self.__linear_system_As_Asd_Ad_beta_alpha__(iC, Niter, res)
 
-    def __linear_system_alpha__(self, iC, Niter):
+    def __linear_system_alpha__(self, iC, Niter, res):
         B_ijpq = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         E_ijpq = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         I_ijpq = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
@@ -1658,8 +1684,8 @@ class MLE:
             A                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]*iC[:,mm,nn]*self.bin_terms['EBo_ij_b'][pp,qq,:]) 
         
         # build system matrix and independent term
-        sys_mat  = np.zeros((self.Nvar, self.Nvar), dtype=np.float64)
-        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        sys_mat  = np.zeros((res.Nvar, res.Nvar), dtype=np.float64)
+        ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as alpha_i
         for ii, band_i in enumerate(self.bands):
@@ -1681,30 +1707,30 @@ class MLE:
         std_now = np.sqrt(np.diagonal(cov_now)) 
         
         # save results even if something went wrong
-        self.params["ml"][f"Iter {Niter+1}"]         = {}
-        self.params["std fisher"][f"Iter {Niter+1}"] = {}
-        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        res.ml[f"Iter {Niter+1}"]         = {}
+        res.std_fisher[f"Iter {Niter+1}"] = {}
+        res.cov_fisher[f"Iter {Niter+1}"] = cov_now
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii]
-                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii]
+                res.ml[f"Iter {Niter+1}"][band]         = ang_now[ii]
+                res.std_fisher[f"Iter {Niter+1}"][band] = std_now[ii]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii]
-                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii]
+                res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii]
+                res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii]
         
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
-    def __linear_system_Ad_alpha__(self, iC, Niter):
+    def __linear_system_Ad_alpha__(self, iC, Niter, res):
         B_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
         E_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
         I_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
         ####
         D_ij       = np.zeros((self.Nbands, self.Nbands), dtype=np.float64)
         H_ij       = np.zeros((self.Nbands, self.Nbands), dtype=np.float64) 
-        sigma_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
-        omega_ij   = np.zeros((self.Nbands,self.Nbands), dtype=np.float64)
+        sigma_ij   = np.zeros((self.Nbands, self.Nbands), dtype=np.float64)
+        omega_ij   = np.zeros((self.Nbands, self.Nbands), dtype=np.float64)
         ####
         A = 0; R = 0; N = 0
         for MN_pair in self.MNidx:
@@ -1723,8 +1749,8 @@ class MLE:
             N                  += np.sum(self.bin_terms['EBo_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
 
         # build system matrix and independent term
-        sys_mat  = np.zeros((self.Nvar, self.Nvar), dtype=np.float64)
-        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        sys_mat  = np.zeros((res.Nvar, res.Nvar), dtype=np.float64)
+        ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as Ad, alpha_i
         sys_mat[0, 0] = R # Ad - Ad  
@@ -1735,17 +1761,17 @@ class MLE:
             
             # Ad - alpha_i
             Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
-            sys_mat[0, idx_i+self.ext_par] += 2*Ad_ai; 
-            sys_mat[idx_i+self.ext_par, 0] += 2*Ad_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*Ad_ai; 
+            sys_mat[idx_i+res.ext_par, 0] += 2*Ad_ai
 
-            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:])) # alpha_i
+            ind_term[idx_i+res.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:])) # alpha_i
             for jj, band_j in enumerate(self.bands):
                 idx_j = self.inst[band_j]['alpha idx']
                 # alpha_i - alpha_j terms
                 aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
                 aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
                 aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
-                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                sys_mat[idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
         
         # solve Ax=B
         # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
@@ -1754,22 +1780,22 @@ class MLE:
         std_now = np.sqrt(np.diagonal(cov_now)) 
         
         # save results even if something went wrong
-        self.params["ml"][f"Iter {Niter+1}"]         = {"Ad":ang_now[0]}
-        self.params["std fisher"][f"Iter {Niter+1}"] = {"Ad":std_now[0]}
-        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        res.ml[f"Iter {Niter+1}"]         = {"Ad":ang_now[0]}
+        res.std_fisher[f"Iter {Niter+1}"] = {"Ad":std_now[0]}
+        res.cov_fisher[f"Iter {Niter+1}"] = cov_now
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][band]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][band] = std_now[ii+res.ext_par]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
         
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
-    
-    def __linear_system_As_Ad_alpha__(self, iC, Niter):
+            
+    def __linear_system_As_Ad_alpha__(self, iC, Niter, res):
         B_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         E_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         I_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
@@ -1803,8 +1829,8 @@ class MLE:
             W                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
 
         # build system matrix and independent term
-        sys_mat  = np.zeros((self.Nvar, self.Nvar),dtype=np.float64)
-        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        sys_mat  = np.zeros((res.Nvar, res.Nvar),dtype=np.float64)
+        ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as As, Ad, Asd, beta, alpha_i
         sys_mat[0, 0] = S                    # As - As
@@ -1819,14 +1845,14 @@ class MLE:
             
             # As - alpha_i 
             As_ai = np.sum(nu_ij[:,ii]) - np.sum(psi_ij[ii,:])
-            sys_mat[0, idx_i+self.ext_par] += 2*As_ai; sys_mat[idx_i+self.ext_par, 0] += 2*As_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*As_ai; sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
 
             # Ad - alpha_i
             Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
-            sys_mat[1, idx_i+self.ext_par] += 2*Ad_ai; sys_mat[idx_i+self.ext_par, 1] += 2*Ad_ai
+            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai; sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
 
             # alpha_i
-            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
+            ind_term[idx_i+res.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
             
             for jj, band_j in enumerate(self.bands):
                 idx_j = self.inst[band_j]['alpha idx']
@@ -1834,7 +1860,7 @@ class MLE:
                 aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
                 aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
                 aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
-                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                sys_mat[idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
 
         # solve Ax=B
         # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
@@ -1843,22 +1869,22 @@ class MLE:
         std_now = np.sqrt(np.diagonal(cov_now)) 
         
         # save results even if something went wrong
-        self.params["ml"][f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1]}
-        self.params["std fisher"][f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1]}
-        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        res.ml[f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1]}
+        res.std_fisher[f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1]}
+        res.cov_fisher[f"Iter {Niter+1}"] = cov_now
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][band]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][band] = std_now[ii+res.ext_par]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
         
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
-    def __linear_system_As_Asd_Ad_alpha__(self, iC, Niter):
+    def __linear_system_As_Asd_Ad_alpha__(self, iC, Niter, res):
         B_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         E_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         I_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
@@ -1910,8 +1936,8 @@ class MLE:
             xi                 += np.sum(self.bin_terms['EsBd_ij_b'][ii,jj,:]  *iC[:,mm,nn]* self.bin_terms['EBd_ij_b'][pp,qq,:])
 
         # build system matrix and independent term
-        sys_mat  = np.zeros((self.Nvar, self.Nvar),dtype=np.float64)
-        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        sys_mat  = np.zeros((res.Nvar, res.Nvar),dtype=np.float64)
+        ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as As, Ad, Asd, beta, alpha_i
         sys_mat[0, 0] = S                             # As - As
@@ -1932,18 +1958,18 @@ class MLE:
             
             # As - alpha_i 
             As_ai = np.sum(nu_ij[:,ii]) - np.sum(psi_ij[ii,:])
-            sys_mat[0, idx_i+self.ext_par] += 2*As_ai; sys_mat[idx_i+self.ext_par, 0] += 2*As_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*As_ai; sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
 
             # Ad - alpha_i
             Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
-            sys_mat[1, idx_i+self.ext_par] += 2*Ad_ai; sys_mat[idx_i+self.ext_par, 1] += 2*Ad_ai
+            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai; sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
 
             # Asd - alpha_i
             Asd_ai = np.sum(pi_ij[:,ii]) + np.sum(rho_ij[:,ii]) - np.sum(phi_ij[ii,:]) - np.sum(OMEGA_ij[ii,:])
-            sys_mat[2, idx_i+self.ext_par] += 2*Asd_ai; sys_mat[idx_i+self.ext_par, 2] += 2*Asd_ai
+            sys_mat[2, idx_i+res.ext_par] += 2*Asd_ai; sys_mat[idx_i+res.ext_par, 2] += 2*Asd_ai
 
             # alpha_i
-            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
+            ind_term[idx_i+res.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
             
             for jj, band_j in enumerate(self.bands):
                 idx_j = self.inst[band_j]['alpha idx']
@@ -1951,7 +1977,7 @@ class MLE:
                 aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
                 aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
                 aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
-                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                sys_mat[idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
 
         # solve Ax=B
         # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
@@ -1960,22 +1986,22 @@ class MLE:
         std_now = np.sqrt(np.diagonal(cov_now)) 
         
         # save results even if something went wrong
-        self.params["ml"][f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1], "Asd":ang_now[2]}
-        self.params["std fisher"][f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1], "Asd":std_now[2]}
-        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        res.ml[f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1], "Asd":ang_now[2]}
+        res.std_fisher[f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1], "Asd":std_now[2]}
+        res.cov_fisher[f"Iter {Niter+1}"] = cov_now
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][band]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][band] = std_now[ii+res.ext_par]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
         
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
-    def __linear_system_beta_alpha__(self, iC, Niter):
+    def __linear_system_beta_alpha__(self, iC, Niter, res):
         B_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
         E_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
         I_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
@@ -2008,8 +2034,8 @@ class MLE:
             F                  += np.sum(self.bin_terms['EEcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
             G                  += np.sum(self.bin_terms['BBcmb_ij_b'][ii,jj,:] *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
         # build system matrix and independent term
-        sys_mat  = np.zeros((self.Nvar, self.Nvar), dtype=np.float64)
-        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        sys_mat  = np.zeros((res.Nvar, res.Nvar), dtype=np.float64)
+        ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as beta, alpha_i
         
@@ -2021,17 +2047,17 @@ class MLE:
             
             # beta - alpha_i
             b_a = np.sum(tau_ij[:,ii]) + np.sum(epsilon_ij[ii,:]) - np.sum(varphi_ij[:,ii]) - np.sum(ene_ij[ii,:])
-            sys_mat[0, idx_i+self.ext_par] += 4*b_a
-            sys_mat[idx_i+self.ext_par, 0] += 4*b_a
+            sys_mat[0, idx_i+res.ext_par] += 4*b_a
+            sys_mat[idx_i+res.ext_par, 0] += 4*b_a
 
-            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:])) # alpha_i
+            ind_term[idx_i+res.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:])) # alpha_i
             for jj, band_j in enumerate(self.bands):
                 idx_j = self.inst[band_j]['alpha idx']
                 # alpha_i - alpha_j terms
                 aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
                 aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
                 aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
-                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                sys_mat[idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
         
         # solve Ax=B
         # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
@@ -2040,22 +2066,22 @@ class MLE:
         std_now = np.sqrt(np.diagonal(cov_now)) 
         
         # save results even if something went wrong
-        self.params["ml"][f"Iter {Niter+1}"]         = {"beta":ang_now[0]}
-        self.params["std fisher"][f"Iter {Niter+1}"] = {"beta":std_now[0]}
-        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        res.ml[f"Iter {Niter+1}"]         = {"beta":ang_now[0]}
+        res.std_fisher[f"Iter {Niter+1}"] = {"beta":std_now[0]}
+        res.cov_fisher[f"Iter {Niter+1}"] = cov_now
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][band]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][band] = std_now[ii+res.ext_par]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
         
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
-    def __linear_system_Ad_beta_alpha__(self, iC, Niter):
+    def __linear_system_Ad_beta_alpha__(self, iC, Niter, res):
         B_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
         E_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
         I_ijpq = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands), dtype=np.float64)
@@ -2097,8 +2123,8 @@ class MLE:
             LAMBDA             += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['EEcmb_ij_b'][pp,qq,:])
             mu                 += np.sum(self.bin_terms['EBd_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
         # build system matrix and independent term
-        sys_mat  = np.zeros((self.Nvar, self.Nvar), dtype=np.float64)
-        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        sys_mat  = np.zeros((res.Nvar, res.Nvar), dtype=np.float64)
+        ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as Ad, beta, alpha_i
         sys_mat[0, 0] = R # Ad - Ad  
@@ -2113,22 +2139,22 @@ class MLE:
             
             # Ad - alpha_i
             Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
-            sys_mat[0, idx_i+self.ext_par] += 2*Ad_ai; 
-            sys_mat[idx_i+self.ext_par, 0] += 2*Ad_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*Ad_ai; 
+            sys_mat[idx_i+res.ext_par, 0] += 2*Ad_ai
 
             # beta - alpha_i
             b_a = np.sum(tau_ij[:,ii]) + np.sum(epsilon_ij[ii,:]) - np.sum(varphi_ij[:,ii]) - np.sum(ene_ij[ii,:])
-            sys_mat[1, idx_i+self.ext_par] += 4*b_a
-            sys_mat[idx_i+self.ext_par, 1] += 4*b_a
+            sys_mat[1, idx_i+res.ext_par] += 4*b_a
+            sys_mat[idx_i+res.ext_par, 1] += 4*b_a
 
-            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:])) # alpha_i
+            ind_term[idx_i+res.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:])) # alpha_i
             for jj, band_j in enumerate(self.bands):
                 idx_j = self.inst[band_j]['alpha idx']
                 # alpha_i - alpha_j terms
                 aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
                 aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
                 aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
-                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                sys_mat[idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
         
         # solve Ax=B
         # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
@@ -2137,22 +2163,22 @@ class MLE:
         std_now = np.sqrt(np.diagonal(cov_now)) 
         
         # save results even if something went wrong
-        self.params["ml"][f"Iter {Niter+1}"]         = {"Ad":ang_now[0], "beta":ang_now[1]}
-        self.params["std fisher"][f"Iter {Niter+1}"] = {"Ad":std_now[0], "beta":std_now[1]}
-        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        res.ml[f"Iter {Niter+1}"]         = {"Ad":ang_now[0], "beta":ang_now[1]}
+        res.std_fisher[f"Iter {Niter+1}"] = {"Ad":std_now[0], "beta":std_now[1]}
+        res.cov_fisher[f"Iter {Niter+1}"] = cov_now
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][band]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][band] = std_now[ii+res.ext_par]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
         
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
-            
-    def __linear_system_As_Ad_beta_alpha__(self, iC, Niter):
+         
+    def __linear_system_As_Ad_beta_alpha__(self, iC, Niter, res):
         B_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         E_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         I_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
@@ -2204,8 +2230,8 @@ class MLE:
             Y                  += np.sum(self.bin_terms['EBs_ij_b'][ii,jj,:]   *iC[:,mm,nn]* self.bin_terms['BBcmb_ij_b'][pp,qq,:])
 
         # build system matrix and independent term
-        sys_mat  = np.zeros((self.Nvar, self.Nvar),dtype=np.float64)
-        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        sys_mat  = np.zeros((res.Nvar, res.Nvar),dtype=np.float64)
+        ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as As, Ad, Asd, beta, alpha_i
         sys_mat[0, 0] = S                                # As - As
@@ -2225,18 +2251,18 @@ class MLE:
             
             # As - alpha_i 
             As_ai = np.sum(nu_ij[:,ii]) - np.sum(psi_ij[ii,:])
-            sys_mat[0, idx_i+self.ext_par] += 2*As_ai; sys_mat[idx_i+self.ext_par, 0] += 2*As_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*As_ai; sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
 
             # Ad - alpha_i
             Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
-            sys_mat[1, idx_i+self.ext_par] += 2*Ad_ai; sys_mat[idx_i+self.ext_par, 1] += 2*Ad_ai
+            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai; sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
 
             # beta - alpha_i
             b_a = np.sum(tau_ij[:,ii]) + np.sum(epsilon_ij[ii,:]) - np.sum(varphi_ij[:,ii]) - np.sum(ene_ij[ii,:])
-            sys_mat[2, idx_i+self.ext_par] += 4*b_a; sys_mat[idx_i+self.ext_par, 2] += 4*b_a
+            sys_mat[2, idx_i+res.ext_par] += 4*b_a; sys_mat[idx_i+res.ext_par, 2] += 4*b_a
 
             # alpha_i
-            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
+            ind_term[idx_i+res.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
             
             for jj, band_j in enumerate(self.bands):
                 idx_j = self.inst[band_j]['alpha idx']
@@ -2244,7 +2270,7 @@ class MLE:
                 aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
                 aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
                 aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
-                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                sys_mat[idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
 
         # solve Ax=B
         # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
@@ -2253,22 +2279,22 @@ class MLE:
         std_now = np.sqrt(np.diagonal(cov_now)) 
         
         # save results even if something went wrong
-        self.params["ml"][f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1], "beta":ang_now[2]}
-        self.params["std fisher"][f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1], "beta":std_now[2]}
-        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        res.ml[f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1], "beta":ang_now[2]}
+        res.std_fisher[f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1], "beta":std_now[2]}
+        res.cov_fisher[f"Iter {Niter+1}"] = cov_now
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][band]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][band] = std_now[ii+res.ext_par]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
         
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
-    def __linear_system_As_Asd_Ad_beta_alpha__(self, iC, Niter):
+    def __linear_system_As_Asd_Ad_beta_alpha__(self, iC, Niter, res):
         B_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         E_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
         I_ijpq     = np.zeros((self.Nbands,self.Nbands, self.Nbands,self.Nbands), dtype=np.float64)
@@ -2343,8 +2369,8 @@ class MLE:
 
 
         # build system matrix and independent term
-        sys_mat  = np.zeros((self.Nvar, self.Nvar),dtype=np.float64)
-        ind_term = np.zeros(self.Nvar, dtype=np.float64)
+        sys_mat  = np.zeros((res.Nvar, res.Nvar),dtype=np.float64)
+        ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as As, Ad, Asd, beta, alpha_i
         sys_mat[0, 0] = S                                # As - As
@@ -2370,22 +2396,22 @@ class MLE:
             
             # As - alpha_i 
             As_ai = np.sum(nu_ij[:,ii]) - np.sum(psi_ij[ii,:])
-            sys_mat[0, idx_i+self.ext_par] += 2*As_ai; sys_mat[idx_i+self.ext_par, 0] += 2*As_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*As_ai; sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
 
             # Ad - alpha_i
             Ad_ai = np.sum(sigma_ij[:,ii]) - np.sum(omega_ij[ii,:])
-            sys_mat[1, idx_i+self.ext_par] += 2*Ad_ai; sys_mat[idx_i+self.ext_par, 1] += 2*Ad_ai
+            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai; sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
 
             # Asd - alpha_i
             Asd_ai = np.sum(pi_ij[:,ii]) + np.sum(rho_ij[:,ii]) - np.sum(phi_ij[ii,:]) - np.sum(OMEGA_ij[ii,:])
-            sys_mat[2, idx_i+self.ext_par] += 2*Asd_ai; sys_mat[idx_i+self.ext_par, 2] += 2*Asd_ai
+            sys_mat[2, idx_i+res.ext_par] += 2*Asd_ai; sys_mat[idx_i+res.ext_par, 2] += 2*Asd_ai
 
             # beta - alpha_i
             b_a = np.sum(tau_ij[:,ii]) + np.sum(epsilon_ij[ii,:]) - np.sum(varphi_ij[:,ii]) - np.sum(ene_ij[ii,:])
-            sys_mat[3, idx_i+self.ext_par] += 4*b_a; sys_mat[idx_i+self.ext_par, 3] += 4*b_a
+            sys_mat[3, idx_i+res.ext_par] += 4*b_a; sys_mat[idx_i+res.ext_par, 3] += 4*b_a
 
             # alpha_i
-            ind_term[idx_i+self.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
+            ind_term[idx_i+res.ext_par] += 2*(np.sum(D_ij[:,ii]) - np.sum(H_ij[ii,:]))
             
             for jj, band_j in enumerate(self.bands):
                 idx_j = self.inst[band_j]['alpha idx']
@@ -2393,7 +2419,7 @@ class MLE:
                 aux1 = np.sum(E_ijpq[:, jj, :, ii]) + np.sum(E_ijpq[:, ii, :, jj])
                 aux2 = np.sum(B_ijpq[jj, :, ii, :]) + np.sum(B_ijpq[ii, :, jj, :])
                 aux3 = np.sum(I_ijpq[jj, :, :, ii]) + np.sum(I_ijpq[ii, :, :, jj])
-                sys_mat[idx_i+self.ext_par, idx_j+self.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                sys_mat[idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
 
         # solve Ax=B
         # ang_now = np.matmul(np.linalg.pinv(sys_mat), ind_term) # risky alternative
@@ -2402,36 +2428,33 @@ class MLE:
         std_now = np.sqrt(np.diagonal(cov_now)) 
         
         # save results even if something went wrong
-        self.params["ml"][f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1], "Asd":ang_now[2],"beta":ang_now[3]}
-        self.params["std fisher"][f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1], "Asd":std_now[2],"beta":std_now[3]}
-        self.params["cov fisher"][f"Iter {Niter+1}"] = cov_now
+        res.ml[f"Iter {Niter+1}"]         = {"As":ang_now[0], "Ad":ang_now[1], "Asd":ang_now[2],"beta":ang_now[3]}
+        res.std_fisher[f"Iter {Niter+1}"] = {"As":std_now[0], "Ad":std_now[1], "Asd":std_now[2],"beta":std_now[3]}
+        res.cov_fisher[f"Iter {Niter+1}"] = cov_now
         if self.alpha_per_split:
             for ii, band in enumerate(self.bands):
-                self.params["ml"][f"Iter {Niter+1}"][band]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][band] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][band]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][band] = std_now[ii+res.ext_par]
         else:
             for ii, freq in enumerate(self.spec.freqs):
-                self.params["ml"][f"Iter {Niter+1}"][freq]         = ang_now[ii+self.ext_par]
-                self.params["std fisher"][f"Iter {Niter+1}"][freq] = std_now[ii+self.ext_par]
+                res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
+                res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
         
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
-###############################################################################    
-        
-        
-
-############################################################################### 
-
+############################################################################## 
     
-    def calculate(self, return_result=False):
+    def calculate(self, idx, return_result=False):
         # this function always saves the result
+        res = Result(self.spec, self.fit, idx, self.alpha_per_split, 
+                     self.rm_same_tube, self.nlb, self.bmin, self.bmax)
         # read the input spectra 
         try:
-            input_cls = self.spec.get_spectra(self.sim_idx, sync='As' in self.fit)
+            input_cls = self.spec.get_spectra(idx, sync='As' in self.fit)
         except TypeError:
             self.spec.compute(self.sim_idx, sync='As' in self.fit)
-            input_cls = self.spec.get_spectra(self.sim_idx, sync='As' in self.fit)
+            input_cls = self.spec.get_spectra(idx, sync='As' in self.fit)
         
         # format cls and calculate elements of covariance matrix
         self.process_cls(input_cls)
@@ -2440,22 +2463,22 @@ class MLE:
         converged = False
         niter     = 0
         while not converged:
-            cov    = self.build_cov(niter)
+            cov    = self.build_cov(niter, res)
             invcov = np.linalg.inv(cov/self.fsky)
             try:
-                self.solve_linear_system(invcov, niter)
+                self.solve_linear_system(invcov, niter, res)
                 # evaluate convergence of the iterative calculation 
                 # use only the angles as convergence criterion, not amplitude
                 # use alpha + beta sum as convergence criterion 
-                ang_now      = self.__get_ml_alphas__(niter+1, add_beta='beta' in self.fit)
+                ang_now      = self.__get_ml_alphas__(niter+1, res, add_beta='beta' in self.fit)
                 #difference with i-1
-                ang_before_1 = self.__get_ml_alphas__(niter,   add_beta='beta' in self.fit)
+                ang_before_1 = self.__get_ml_alphas__(niter, res, add_beta='beta' in self.fit)
                 c1           = np.abs(ang_now-ang_before_1)*rad2arcmin >= self.tol
                 if np.sum(c1)<=1 or niter>self.niter_max:
                     converged = True
                 elif niter>0:
                     #difference with i-2 
-                    ang_before_2 = self.__get_ml_alphas__(niter-1, add_beta='beta' in self.fit)
+                    ang_before_2 = self.__get_ml_alphas__(niter-1, res, add_beta='beta' in self.fit)
                     c2 = np.abs(ang_now-ang_before_2)*rad2arcmin >= self.tol
                     if np.sum(c2)<=1:
                         converged = True
@@ -2465,34 +2488,28 @@ class MLE:
                 
             niter += 1
         #save results to disk 
-        pl.dump(self.params, open(self.result_name(self.sim_idx), "wb"), protocol=pl.HIGHEST_PROTOCOL)
+        pl.dump(res, open(self.result_name(idx), "wb"), protocol=pl.HIGHEST_PROTOCOL)
         if return_result:
-            return self.params.copy()
-        #TODO if you add the configuration information to mle.params, then it's the perfect
-        # dictionary to save, it already has everything
-        # but maybe you don't need to if it's linked to a MLE object from the start
-
-        
+            return res
+   
     def result_name(self, idx):
         path     = self.libdir
-        fit_tag  = f"{self.fit}{'_sameAlphaPerSplit' if self.alpha_per_split else '_diffAlphaPerSplit'}{'_rmSameTube' if self.rm_same_tube else ''}{'_tempBP'if self.spec.temp_bp else ''}" 
+        fit_tag  = f"{self.fit.replace(' + ','_')}{'_sameAlphaPerSplit' if self.alpha_per_split else '_diffAlphaPerSplit'}{'_rmSameTube' if self.rm_same_tube else ''}{'_tempBP'if self.spec.temp_bp else ''}" 
         bin_tag  = f"Nb{self.nlb}_bmin{self.bmin}_bmax{self.bmax}"
         spec_tag = f"aposcale{str(self.spec.aposcale).replace('.','p')}{'_CO' if self.spec.CO else ''}{'_PS' if self.spec.PS else ''}{'_pureB' if self.spec.pureB else ''}_N{self.nside}"
         return f"{path}/ml_params_{fit_tag}_{bin_tag}_{spec_tag}_{idx:03d}.pkl"
-    
-
-    #TODO this function is overwriting things in self.params and messing with
-    # the rad2deg conversion   
-    def estimate_angles(self, overwrite=False, Niter=-1):
-        file = self.result_name(self.sim_idx)
+       
+    def estimate_angles(self, idx, overwrite=False, Niter=-1):
+        file = self.result_name(idx)
         if (not os.path.isfile(file)) or overwrite:
-            params = self.calculate(return_result=True)
+            res = self.calculate(idx, return_result=True)
         else:
-            self.params = pl.load(open(file, "rb"))
-            params = self.params.copy()
-        max_iter = len(params["ml"].keys())
-        result   = params["ml"][f"Iter {max_iter-1 if Niter==-1 else Niter}"].copy()
-        for var in params["variables"].split(", "):
+            res = pl.load(open(file, "rb"))
+        max_iter = len(res.ml.keys())
+        params   = {}
+        for var in res.variables.split(", "):
             if var not in ["As", "Asd", "Ad"]:
-                result[var] = np.rad2deg(params[var])
-        return  result
+                params[var] = np.rad2deg(res.ml[f"Iter {max_iter-1 if Niter==-1 else Niter}"][var])
+            else:
+                params[var] = res.ml[f"Iter {max_iter-1 if Niter==-1 else Niter}"][var]
+        return  params
