@@ -16,7 +16,7 @@ from typing import Dict, Optional, Any, Union, List, Tuple
 
 class Spectra:
     def __init__(self, lat_lib: LATsky, 
-                 aposcale: float = 1.5, template_bandpass: bool = False, pureB: bool = False,
+                 aposcale: float = 2.0, template_bandpass: bool = False, pureB: bool = False,
                  CO: bool = True, PS: bool = True):
         """
         Initializes the Spectra class for computing and handling power spectra of observed CMB maps.
@@ -24,7 +24,7 @@ class Spectra:
         Parameters:
         libdir (str): Directory where the spectra will be stored.
         lat_lib (LATsky): An instance of the LATsky class containing LAT-related configurations.
-        aposcale (float, optional): Apodisation scale in degrees. Defaults to 1 deg
+        aposcale (float, optional): Apodisation scale in degrees. Defaults to 2 deg
         template_bandpass (bool, optional): Apply bandpass integration to the foreground template. Defaults to False.
         pureB (bool, optional): Apply B-mode purification. Defaults to False
         CO (bool, optional): Mask the brightest regions of CO emission. Defautls to True.
