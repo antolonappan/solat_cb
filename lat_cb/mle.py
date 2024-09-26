@@ -9,6 +9,10 @@ from lat_cb import mpi
 
 rad2arcmin = 180*60/np.pi
 
+def effective_ell(lmax, bin_conf):
+    (ib_grid, il_grid, w_array, ell_array) = bin_conf
+    ell = np.arange(0, lmax+1, 1)
+    return np.sum(w_array[ib_grid,il_grid]*ell[ell_array[ib_grid,il_grid]], axis=1)
 
 def bin_from_edges(start, end):
     nls  = np.amax(end)
@@ -164,96 +168,173 @@ class Result:
       
 class LinearSystem:
     mode_options = ['total', 'cumulative', 'ell']
-    
-    def __init__(self, mle, inv_cov, mode="total"):
-        assert mode in self.mode_options, f"mode must be one of {self.mode_options}"
-        self.mode           = mode
+
+    def __init__(self, mle, inv_cov, mode="total", window=5):
         self.dt             = np.float64
         self.fit            = mle.fit
         self.bin_cl         = mle.bin_terms
         self.iC             = inv_cov
-        self.Nb             = mle.Nbands
+        self.Nbands         = mle.Nbands
         self.mle            = mle
+        
+        assert mode in self.mode_options, f"mode must be one of {self.mode_options}"
+        self.mode           = mode
+        self.window         = window
+        self.Nbins          = mle.Nbins
+        if mode=="total":
+            self.ext_dim = 1
+        elif mode=="cumulative":
+            self.ext_dim = self.Nbins
+        elif mode=="ell":
+            self.ext_dim = self.Nbins - (self.window - 1)
+
         # common to all fits (basic alpha*alpha fit)
-        self.B_ijpq         = np.zeros((self.Nb, self.Nb, self.Nb, self.Nb), dtype=self.dt)
-        self.E_ijpq         = np.zeros((self.Nb, self.Nb, self.Nb, self.Nb), dtype=self.dt)
-        self.I_ijpq         = np.zeros((self.Nb, self.Nb, self.Nb, self.Nb), dtype=self.dt)
-        self.D_ij           = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-        self.H_ij           = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-        self.A              = 0
+        self.B_ijpq         = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+        self.E_ijpq         = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+        self.I_ijpq         = np.zeros((self.Nbands, self.Nbands, self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+        self.D_ij           = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+        self.H_ij           = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+        self.A              = np.zeros(self.ext_dim, dtype=self.dt)
         # only used in particular combinations
         if 'beta' in self.fit:
             # beta*beta and beta*alpha 
-            self.tau_ij     = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-            self.varphi_ij  = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-            self.ene_ij     = np.zeros((self.Nb, self.Nb), dtype=self.dt) 
-            self.epsilon_ij = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-            self.C          = 0 
-            self.F          = 0 
-            self.G          = 0 
-            self.O          = 0 
-            self.P          = 0
+            self.tau_ij     = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+            self.varphi_ij  = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+            self.ene_ij     = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt) 
+            self.epsilon_ij = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+            self.C          = np.zeros(self.ext_dim, dtype=self.dt) 
+            self.F          = np.zeros(self.ext_dim, dtype=self.dt) 
+            self.G          = np.zeros(self.ext_dim, dtype=self.dt) 
+            self.O          = np.zeros(self.ext_dim, dtype=self.dt) 
+            self.P          = np.zeros(self.ext_dim, dtype=self.dt)
         if 'Ad' in self.fit:
             # Ad*Ad and Ad*alpha
-            self.sigma_ij   = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-            self.omega_ij   = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-            self.R          = 0
-            self.N          = 0
+            self.sigma_ij   = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+            self.omega_ij   = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+            self.R          = np.zeros(self.ext_dim, dtype=self.dt)
+            self.N          = np.zeros(self.ext_dim, dtype=self.dt)
             if 'beta' in self.fit:
                 # Ad*beta
-                self.LAMBDA = 0
-                self.mu     = 0
+                self.LAMBDA = np.zeros(self.ext_dim, dtype=self.dt)
+                self.mu     = np.zeros(self.ext_dim, dtype=self.dt)
         if 'As' in self.fit:
             # As*As and As*alpha
-            self.nu_ij      = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-            self.psi_ij     = np.zeros((self.Nb, self.Nb), dtype=self.dt) 
-            self.S          = 0
-            self.J          = 0
+            self.nu_ij      = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+            self.psi_ij     = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt) 
+            self.S          = np.zeros(self.ext_dim, dtype=self.dt)
+            self.J          = np.zeros(self.ext_dim, dtype=self.dt)
             if 'beta' in self.fit:
                 # As*beta
-                self.X      = 0
-                self.Y      = 0
+                self.X      = np.zeros(self.ext_dim, dtype=self.dt)
+                self.Y      = np.zeros(self.ext_dim, dtype=self.dt)
             if 'Ad' in self.fit:
                 # As*Ad
-                self.W      = 0
+                self.W      = np.zeros(self.ext_dim, dtype=self.dt)
         if 'Asd' in self.fit:
             # Asd*Asd and Asd*alpha
-            self.pi_ij      = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-            self.rho_ij     = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-            self.phi_ij     = np.zeros((self.Nb, self.Nb), dtype=self.dt) 
-            self.OMEGA_ij   = np.zeros((self.Nb, self.Nb), dtype=self.dt)
-            self.T          = 0
-            self.U          = 0
-            self.Z          = 0
-            self.M          = 0
-            self.L          = 0
+            self.pi_ij      = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+            self.rho_ij     = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+            self.phi_ij     = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt) 
+            self.OMEGA_ij   = np.zeros((self.Nbands, self.Nbands, self.ext_dim), dtype=self.dt)
+            self.T          = np.zeros(self.ext_dim, dtype=self.dt)
+            self.U          = np.zeros(self.ext_dim, dtype=self.dt)
+            self.Z          = np.zeros(self.ext_dim, dtype=self.dt)
+            self.M          = np.zeros(self.ext_dim, dtype=self.dt)
+            self.L          = np.zeros(self.ext_dim, dtype=self.dt)
             if 'beta' in self.fit:
                 # Asd*beta
-                self.DELTA  = 0 
-                self.eta    = 0 
-                self.theta  = 0 
-                self.delta  = 0
+                self.DELTA  = np.zeros(self.ext_dim, dtype=self.dt)
+                self.eta    = np.zeros(self.ext_dim, dtype=self.dt) 
+                self.theta  = np.zeros(self.ext_dim, dtype=self.dt) 
+                self.delta  = np.zeros(self.ext_dim, dtype=self.dt)
             if 'Ad' in self.fit:
                 # Asd*Ad
-                self.K      = 0
-                self.xi     = 0
+                self.K      = np.zeros(self.ext_dim, dtype=self.dt)
+                self.xi     = np.zeros(self.ext_dim, dtype=self.dt)
             if 'As' in self.fit:
                 # Asd*As
-                self.Q      = 0
-                self.V      = 0
-
+                self.Q      = np.zeros(self.ext_dim, dtype=self.dt)
+                self.V      = np.zeros(self.ext_dim, dtype=self.dt)
 
     def compute_terms(self):
         if self.mode=="total":
             return self.__total__()
         elif self.mode=="cumulative":
             return self.__cumulative__() 
-        elif self.fit=="'ell":
+        elif self.mode=="ell":
             return self.__ell__()
-        
- 
-    #TODO ell and cumulative
-    
+          
+    def __cumulative__(self):
+        for MN_pair in self.mle.MNidx:
+            ii, jj, pp, qq, mm, nn = self.mle.get_index(MN_pair)
+            # common to all fits (basic alpha*alpha fit)
+            self.B_ijpq[ii,jj,pp,qq,:]    = np.cumsum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBo_ij_b'][pp,qq,:])
+            self.E_ijpq[ii,jj,pp,qq,:]    = np.cumsum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEo_ij_b'][pp,qq,:])
+            self.I_ijpq[ii,jj,pp,qq,:]    = np.cumsum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEo_ij_b'][pp,qq,:]) 
+            self.D_ij[ii,jj,:]           += np.cumsum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:])
+            self.H_ij[ii,jj,:]           += np.cumsum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:])
+            self.A[:]                    += np.cumsum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:])
+            # only used in particular combinations
+            if 'beta' in self.fit:
+                # beta*beta and beta*alpha 
+                self.tau_ij[ii,jj,:]     += np.cumsum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:])
+                self.varphi_ij[ii,jj,:]  += np.cumsum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+                self.ene_ij[ii,jj,:]     += np.cumsum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:])
+                self.epsilon_ij[ii,jj,:] += np.cumsum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+                self.C[:]                += np.cumsum(self.bin_cl['EEcmb_ij_b'][ii,jj,:] *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:]) 
+                self.F[:]                += np.cumsum(self.bin_cl['EEcmb_ij_b'][ii,jj,:] *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:]) 
+                self.G[:]                += np.cumsum(self.bin_cl['BBcmb_ij_b'][ii,jj,:] *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:]) 
+                self.O[:]                += np.cumsum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:]) 
+                self.P[:]                += np.cumsum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+            if 'Ad' in self.fit:
+                # Ad*Ad and Ad*alpha
+                self.sigma_ij[ii,jj,:]   += np.cumsum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+                self.omega_ij[ii,jj,:]   += np.cumsum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+                self.R[:]                += np.cumsum(self.bin_cl['EBd_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+                self.N[:]                += np.cumsum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+                if 'beta' in self.fit:
+                    # Ad*beta
+                    self.LAMBDA[:]       += np.cumsum(self.bin_cl['EBd_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:])
+                    self.mu[:]           += np.cumsum(self.bin_cl['EBd_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+            if 'As' in self.fit:
+                # As*As and As*alpha
+                self.nu_ij[ii,jj,:]      += np.cumsum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:])
+                self.psi_ij[ii,jj,:]     += np.cumsum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:]) 
+                self.S[:]                += np.cumsum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:])
+                self.J[:]                += np.cumsum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:])
+                if 'beta' in self.fit:
+                    # As*beta
+                    self.X[:]            += np.cumsum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:])
+                    self.Y[:]            += np.cumsum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+                if 'Ad' in self.fit:
+                    # As*Ad
+                    self.W[:]            += np.cumsum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+            if 'Asd' in self.fit:
+                # Asd*Asd and Asd*alpha
+                self.pi_ij[ii,jj,:]      += np.cumsum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
+                self.rho_ij[ii,jj,:]     += np.cumsum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
+                self.phi_ij[ii,jj,:]     += np.cumsum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
+                self.OMEGA_ij[ii,jj,:]   += np.cumsum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
+                self.T[:]                += np.cumsum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
+                self.U[:]                += np.cumsum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
+                self.Z[:]                += np.cumsum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
+                self.M[:]                += np.cumsum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
+                self.L[:]                += np.cumsum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
+                if 'beta' in self.fit:
+                    # Asd*beta
+                    self.DELTA[:]        += np.cumsum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:]) 
+                    self.eta[:]          += np.cumsum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:]) 
+                    self.theta[:]        += np.cumsum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:]) 
+                    self.delta[:]        += np.cumsum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+                if 'Ad' in self.fit:
+                    # Asd*Ad
+                    self.K[:]            += np.cumsum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+                    self.xi[:]           += np.cumsum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+                if 'As' in self.fit:
+                    # Asd*As
+                    self.Q[:]            += np.cumsum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
+                    self.V[:]            += np.cumsum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
+   
     #TODO PDP: these ones can be further optimised but I'm leaving them like this
     # for now to debug the new code structure first
     def __total__(self):
@@ -266,7 +347,7 @@ class LinearSystem:
             self.D_ij[ii,jj]           += np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:])
             self.H_ij[ii,jj]           += np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:])
             self.A                     += np.sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:])
-            # only used in particular combinations
+            # only used in particular combinations 
             if 'beta' in self.fit:
                 # beta*beta and beta*alpha 
                 self.tau_ij[ii,jj]     += np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:])
@@ -331,72 +412,74 @@ class LinearSystem:
         for MN_pair in self.mle.MNidx:
             ii, jj, pp, qq, mm, nn = self.mle.get_index(MN_pair)
             # common to all fits (basic alpha*alpha fit)
-            self.B_ijpq[ii,jj,pp,qq]    = np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBo_ij_b'][pp,qq,:])
-            self.E_ijpq[ii,jj,pp,qq]    = np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEo_ij_b'][pp,qq,:])
-            self.I_ijpq[ii,jj,pp,qq]    = np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEo_ij_b'][pp,qq,:]) 
-            self.D_ij[ii,jj]           += np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:])
-            self.H_ij[ii,jj]           += np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:])
-            self.A                     += np.sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:])
+            self.B_ijpq[ii,jj,pp,qq,:]    = moving_sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBo_ij_b'][pp,qq,:], self.window)
+            self.E_ijpq[ii,jj,pp,qq,:]    = moving_sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEo_ij_b'][pp,qq,:], self.window)
+            self.I_ijpq[ii,jj,pp,qq,:]    = moving_sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEo_ij_b'][pp,qq,:], self.window) 
+            self.D_ij[ii,jj,:]           += moving_sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:], self.window)
+            self.H_ij[ii,jj,:]           += moving_sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:], self.window)
+            self.A[:]                    += moving_sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBo_ij_b'][pp,qq,:], self.window)
             # only used in particular combinations
             if 'beta' in self.fit:
                 # beta*beta and beta*alpha 
-                self.tau_ij[ii,jj]     += np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:])
-                self.varphi_ij[ii,jj]  += np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
-                self.ene_ij[ii,jj]     += np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:])
-                self.epsilon_ij[ii,jj] += np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
-                self.C                 += np.sum(self.bin_cl['EEcmb_ij_b'][ii,jj,:] *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:]) 
-                self.F                 += np.sum(self.bin_cl['EEcmb_ij_b'][ii,jj,:] *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:]) 
-                self.G                 += np.sum(self.bin_cl['BBcmb_ij_b'][ii,jj,:] *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:]) 
-                self.O                 += np.sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:]) 
-                self.P                 += np.sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+                self.tau_ij[ii,jj,:]     += moving_sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:], self.window)
+                self.varphi_ij[ii,jj,:]  += moving_sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:], self.window)
+                self.ene_ij[ii,jj,:]     += moving_sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:], self.window)
+                self.epsilon_ij[ii,jj,:] += moving_sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:], self.window)
+                self.C[:]                += moving_sum(self.bin_cl['EEcmb_ij_b'][ii,jj,:] *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:], self.window) 
+                self.F[:]                += moving_sum(self.bin_cl['EEcmb_ij_b'][ii,jj,:] *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:], self.window) 
+                self.G[:]                += moving_sum(self.bin_cl['BBcmb_ij_b'][ii,jj,:] *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:], self.window) 
+                self.O[:]                += moving_sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:], self.window) 
+                self.P[:]                += moving_sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:], self.window)
             if 'Ad' in self.fit:
                 # Ad*Ad and Ad*alpha
-                self.sigma_ij[ii,jj]   += np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
-                self.omega_ij[ii,jj]   += np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
-                self.R                 += np.sum(self.bin_cl['EBd_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
-                self.N                 += np.sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+                self.sigma_ij[ii,jj,:]   += moving_sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:], self.window)
+                self.omega_ij[ii,jj,:]   += moving_sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:], self.window)
+                self.R[:]                += moving_sum(self.bin_cl['EBd_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:], self.window)
+                self.N[:]                += moving_sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:], self.window)
                 if 'beta' in self.fit:
                     # Ad*beta
-                    self.LAMBDA        += np.sum(self.bin_cl['EBd_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:])
-                    self.mu            += np.sum(self.bin_cl['EBd_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+                    self.LAMBDA[:]       += moving_sum(self.bin_cl['EBd_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:], self.window)
+                    self.mu[:]           += moving_sum(self.bin_cl['EBd_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:], self.window)
             if 'As' in self.fit:
                 # As*As and As*alpha
-                self.nu_ij[ii,jj]      += np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:])
-                self.psi_ij[ii,jj]     += np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:]) 
-                self.S                 += np.sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:])
-                self.J                 += np.sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:])
+                self.nu_ij[ii,jj,:]      += moving_sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:], self.window)
+                self.psi_ij[ii,jj,:]     += moving_sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:], self.window) 
+                self.S[:]                += moving_sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:], self.window)
+                self.J[:]                += moving_sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBs_ij_b'][pp,qq,:], self.window)
                 if 'beta' in self.fit:
                     # As*beta
-                    self.X             += np.sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:])
-                    self.Y             += np.sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+                    self.X[:]            += moving_sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:], self.window)
+                    self.Y[:]            += moving_sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:], self.window)
                 if 'Ad' in self.fit:
                     # As*Ad
-                    self.W             += np.sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+                    self.W[:]            += moving_sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:], self.window)
             if 'Asd' in self.fit:
                 # Asd*Asd and Asd*alpha
-                self.pi_ij[ii,jj]      += np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
-                self.rho_ij[ii,jj]     += np.sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
-                self.phi_ij[ii,jj]     += np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
-                self.OMEGA_ij[ii,jj]   += np.sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
-                self.T                 += np.sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
-                self.U                 += np.sum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
-                self.Z                 += np.sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
-                self.M                 += np.sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
-                self.L                 += np.sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
+                self.pi_ij[ii,jj,:]      += moving_sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:], self.window)
+                self.rho_ij[ii,jj,:]     += moving_sum(self.bin_cl['EEo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:], self.window)
+                self.phi_ij[ii,jj,:]     += moving_sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:], self.window)
+                self.OMEGA_ij[ii,jj,:]   += moving_sum(self.bin_cl['BBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:], self.window)
+                self.T[:]                += moving_sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:], self.window)
+                self.U[:]                += moving_sum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:], self.window)
+                self.Z[:]                += moving_sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:], self.window)
+                self.M[:]                += moving_sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:], self.window)
+                self.L[:]                += moving_sum(self.bin_cl['EBo_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:], self.window)
                 if 'beta' in self.fit:
                     # Asd*beta
-                    self.DELTA         += np.sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:]) 
-                    self.eta           += np.sum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:]) 
-                    self.theta         += np.sum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:]) 
-                    self.delta         += np.sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:])
+                    self.DELTA[:]        += moving_sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:], self.window) 
+                    self.eta[:]          += moving_sum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EEcmb_ij_b'][pp,qq,:], self.window) 
+                    self.theta[:]        += moving_sum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:], self.window) 
+                    self.delta[:]        += moving_sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['BBcmb_ij_b'][pp,qq,:], self.window)
                 if 'Ad' in self.fit:
                     # Asd*Ad
-                    self.K             += np.sum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
-                    self.xi            += np.sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:])
+                    self.K[:]            += moving_sum(self.bin_cl['EdBs_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:], self.window)
+                    self.xi[:]           += moving_sum(self.bin_cl['EsBd_ij_b'][ii,jj,:]  *self.iC[:,mm,nn]* self.bin_cl['EBd_ij_b'][pp,qq,:], self.window)
                 if 'As' in self.fit:
                     # Asd*As
-                    self.Q             += np.sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:])
-                    self.V             += np.sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:])
+                    self.Q[:]            += moving_sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EsBd_ij_b'][pp,qq,:], self.window)
+                    self.V[:]            += moving_sum(self.bin_cl['EBs_ij_b'][ii,jj,:]   *self.iC[:,mm,nn]* self.bin_cl['EdBs_ij_b'][pp,qq,:], self.window)
+
+
 
 ########################################################################       
 
@@ -490,8 +573,6 @@ class MLE:
             ii, jj, pp, qq, mm, nn =self.get_index(MN_pair)
             self.MNi[mm, nn] = ii; self.MNj[mm, nn] = jj
             self.MNp[mm, nn] = pp; self.MNq[mm, nn] = qq
-            
-            
             
     def same_tube(self, band_1, band_2):
         return self.inst[band_1]["opt. tube"] == self.inst[band_2]["opt. tube"]
@@ -1938,7 +2019,6 @@ class MLE:
             for ii, freq in enumerate(self.spec.freqs):
                 res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii]
                 res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii]
-        
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
@@ -1950,14 +2030,14 @@ class MLE:
         ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as Ad, alpha_i
-        sys_mat[0, 0] = linsys.R # Ad - Ad  
-        ind_term[0]   = linsys.N # Ad
+        sys_mat[0, 0] = linsys.R[0] # Ad - Ad  
+        ind_term[0]   = linsys.N[0] # Ad
         for ii, band_i in enumerate(self.bands):
             idx_i = self.inst[band_i]['alpha idx']
             
             # Ad - alpha_i
             Ad_ai = np.sum(linsys.sigma_ij[:,ii]) - np.sum(linsys.omega_ij[ii,:])
-            sys_mat[0, idx_i+res.ext_par] += 2*Ad_ai; 
+            sys_mat[0, idx_i+res.ext_par] += 2*Ad_ai
             sys_mat[idx_i+res.ext_par, 0] += 2*Ad_ai
 
             ind_term[idx_i+res.ext_par] += 2*(np.sum(linsys.D_ij[:,ii]) - np.sum(linsys.H_ij[ii,:])) # alpha_i
@@ -1986,7 +2066,6 @@ class MLE:
             for ii, freq in enumerate(self.spec.freqs):
                 res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
                 res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
-        
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
@@ -1998,23 +2077,25 @@ class MLE:
         ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as As, Ad, Asd, beta, alpha_i
-        sys_mat[0, 0] = linsys.S                    # As - As
-        sys_mat[0, 1] = linsys.W; sys_mat[1, 0] = linsys.W # As - Ad
-        ind_term[0]   = linsys.J                    # As
+        sys_mat[0, 0] = linsys.S[0]                              # As - As
+        sys_mat[0, 1] = linsys.W[0]; sys_mat[1, 0] = linsys.W[0] # As - Ad
+        ind_term[0]   = linsys.J[0]                              # As
 
-        sys_mat[1, 1] = linsys.R                    # Ad - Ad
-        ind_term[1]   = linsys.N                    # Ad
+        sys_mat[1, 1] = linsys.R[0]                              # Ad - Ad
+        ind_term[1]   = linsys.N[0]                              # Ad
         
         for ii, band_i in enumerate(self.bands):
             idx_i = self.inst[band_i]['alpha idx']
             
             # As - alpha_i 
             As_ai = np.sum(linsys.nu_ij[:,ii]) - np.sum(linsys.psi_ij[ii,:])
-            sys_mat[0, idx_i+res.ext_par] += 2*As_ai; sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*As_ai
+            sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
 
             # Ad - alpha_i
             Ad_ai = np.sum(linsys.sigma_ij[:,ii]) - np.sum(linsys.omega_ij[ii,:])
-            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai; sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
+            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
 
             # alpha_i
             ind_term[idx_i+res.ext_par] += 2*(np.sum(linsys.D_ij[:,ii]) - np.sum(linsys.H_ij[ii,:]))
@@ -2044,10 +2125,8 @@ class MLE:
             for ii, freq in enumerate(self.spec.freqs):
                 res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
                 res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
-        
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
-
 
     def __linear_system_As_Asd_Ad_alpha__(self, iC, Niter, res):
         linsys = LinearSystem(self, iC)
@@ -2057,17 +2136,19 @@ class MLE:
         ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as As, Ad, Asd, beta, alpha_i
-        sys_mat[0, 0] = linsys.S                             # As - As
-        sys_mat[0, 1] = linsys.W             ; sys_mat[1, 0] = linsys.W    # As - Ad
-        sys_mat[0, 2] = linsys.Q + linsys.V  ; sys_mat[2, 0] = linsys.Q + linsys.V  # As - Asd
-        ind_term[0]   = linsys.J                             # As
+        sys_mat[0, 0] = linsys.S[0]                               # As - As
+        sys_mat[0, 1] = linsys.W[0]; sys_mat[1, 0] = linsys.W[0]  # As - Ad
+        sys_mat[0, 2] = linsys.Q[0] + linsys.V[0]                 # As - Asd
+        sys_mat[2, 0] = linsys.Q[0] + linsys.V[0]  
+        ind_term[0]   = linsys.J[0]                               # As
 
-        sys_mat[1, 1] = linsys.R                             # Ad - Ad
-        sys_mat[1, 2] = linsys.K + linsys.xi ; sys_mat[2, 1] = linsys.K + linsys.xi # Ad - Asd
-        ind_term[1]   = linsys.N                             # Ad
+        sys_mat[1, 1] = linsys.R[0]                               # Ad - Ad
+        sys_mat[1, 2] = linsys.K[0] + linsys.xi[0]                # Ad - Asd
+        sys_mat[2, 1] = linsys.K[0] + linsys.xi[0] 
+        ind_term[1]   = linsys.N[0]                               # Ad
         
-        sys_mat[2, 2] = linsys.T + linsys.U + 2*linsys.Z     # Asd - Asd
-        ind_term[2]   = linsys.M + linsys.L                  # Asd
+        sys_mat[2, 2] = linsys.T[0] + linsys.U[0] + 2*linsys.Z[0] # Asd - Asd
+        ind_term[2]   = linsys.M[0] + linsys.L[0]                 # Asd
                                                   
         
         for ii, band_i in enumerate(self.bands):
@@ -2075,15 +2156,18 @@ class MLE:
             
             # As - alpha_i 
             As_ai = np.sum(linsys.nu_ij[:,ii]) - np.sum(linsys.psi_ij[ii,:])
-            sys_mat[0, idx_i+res.ext_par] += 2*As_ai; sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*As_ai
+            sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
 
             # Ad - alpha_i
             Ad_ai = np.sum(linsys.sigma_ij[:,ii]) - np.sum(linsys.omega_ij[ii,:])
-            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai; sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
+            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
 
             # Asd - alpha_i
             Asd_ai = np.sum(linsys.pi_ij[:,ii]) + np.sum(linsys.rho_ij[:,ii]) - np.sum(linsys.phi_ij[ii,:]) - np.sum(linsys.OMEGA_ij[ii,:])
-            sys_mat[2, idx_i+res.ext_par] += 2*Asd_ai; sys_mat[idx_i+res.ext_par, 2] += 2*Asd_ai
+            sys_mat[2, idx_i+res.ext_par] += 2*Asd_ai
+            sys_mat[idx_i+res.ext_par, 2] += 2*Asd_ai
 
             # alpha_i
             ind_term[idx_i+res.ext_par] += 2*(np.sum(linsys.D_ij[:,ii]) - np.sum(linsys.H_ij[ii,:]))
@@ -2113,7 +2197,6 @@ class MLE:
             for ii, freq in enumerate(self.spec.freqs):
                 res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
                 res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
-        
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
@@ -2125,8 +2208,8 @@ class MLE:
         ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as beta, alpha_i        
-        sys_mat[0, 0] = 4*(linsys.G + linsys.F - 2*linsys.C) # beta - beta
-        ind_term[0]   = 2*(linsys.O - linsys.P)     # beta
+        sys_mat[0, 0] = 4*(linsys.G[0] + linsys.F[0] - 2*linsys.C[0]) # beta - beta
+        ind_term[0]   = 2*(linsys.O[0] - linsys.P[0])                 # beta
         
         for ii, band_i in enumerate(self.bands):
             idx_i = self.inst[band_i]['alpha idx']
@@ -2162,10 +2245,9 @@ class MLE:
             for ii, freq in enumerate(self.spec.freqs):
                 res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
                 res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
-        
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
-
+            
     def __linear_system_Ad_beta_alpha__(self, iC, Niter, res):
         linsys = LinearSystem(self, iC)
         linsys.compute_terms()
@@ -2174,19 +2256,20 @@ class MLE:
         ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as Ad, beta, alpha_i
-        sys_mat[0, 0] = linsys.R # Ad - Ad  
-        sys_mat[0, 1] = 2*(linsys.LAMBDA - linsys.mu); sys_mat[1, 0] = 2*(linsys.LAMBDA - linsys.mu) # Ad - beta 
-        ind_term[0]   = linsys.N # Ad
+        sys_mat[0, 0] = linsys.R[0]                         # Ad - Ad  
+        sys_mat[0, 1] = 2*(linsys.LAMBDA[0] - linsys.mu[0]) # Ad - beta
+        sys_mat[1, 0] = 2*(linsys.LAMBDA[0] - linsys.mu[0])  
+        ind_term[0]   = linsys.N[0]                         # Ad
         
-        sys_mat[1, 1] = 4*(linsys.G + linsys.F - 2*linsys.C) # beta - beta
-        ind_term[1]   = 2*(linsys.O - linsys.P)     # beta
+        sys_mat[1, 1] = 4*(linsys.G[0] + linsys.F[0] - 2*linsys.C[0]) # beta - beta
+        ind_term[1]   = 2*(linsys.O[0] - linsys.P[0])                 # beta
         
         for ii, band_i in enumerate(self.bands):
             idx_i = self.inst[band_i]['alpha idx']
             
             # Ad - alpha_i
             Ad_ai = np.sum(linsys.sigma_ij[:,ii]) - np.sum(linsys.omega_ij[ii,:])
-            sys_mat[0, idx_i+res.ext_par] += 2*Ad_ai; 
+            sys_mat[0, idx_i+res.ext_par] += 2*Ad_ai 
             sys_mat[idx_i+res.ext_par, 0] += 2*Ad_ai
 
             # beta - alpha_i
@@ -2220,10 +2303,9 @@ class MLE:
             for ii, freq in enumerate(self.spec.freqs):
                 res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
                 res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
-        
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
-          
+            
     def __linear_system_As_Ad_beta_alpha__(self, iC, Niter, res):
         linsys = LinearSystem(self, iC)
         linsys.compute_terms()
@@ -2232,32 +2314,37 @@ class MLE:
         ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as As, Ad, Asd, beta, alpha_i
-        sys_mat[0, 0] = linsys.S                                # As - As
-        sys_mat[0, 1] = linsys.W               ; sys_mat[1, 0] = linsys.W       # As - Ad
-        sys_mat[0, 2] = 2*(linsys.X - linsys.Y); sys_mat[2, 0] = 2*(linsys.X - linsys.Y) # As - beta
-        ind_term[0]   = linsys.J                                # As
+        sys_mat[0, 0] = linsys.S[0]                                # As - As
+        sys_mat[0, 1] = linsys.W[0]; sys_mat[1, 0] = linsys.W[0]   # As - Ad
+        sys_mat[0, 2] = 2*(linsys.X[0] - linsys.Y[0])              # As - beta
+        sys_mat[2, 0] = 2*(linsys.X[0] - linsys.Y[0]) 
+        ind_term[0]   = linsys.J[0]                                # As
 
-        sys_mat[1, 1] = linsys.R                                            # Ad - Ad
-        sys_mat[1, 2] = 2*(linsys.LAMBDA - linsys.mu); sys_mat[2, 1] = 2*(linsys.LAMBDA - linsys.mu) # Ad - beta
-        ind_term[1]   = linsys.N                                            # Ad
+        sys_mat[1, 1] = linsys.R[0]                                # Ad - Ad
+        sys_mat[1, 2] = 2*(linsys.LAMBDA[0] - linsys.mu[0])        # Ad - beta
+        sys_mat[2, 1] = 2*(linsys.LAMBDA[0] - linsys.mu[0]) 
+        ind_term[1]   = linsys.N[0]                                # Ad
         
-        sys_mat[2, 2] = 4*(linsys.G + linsys.F - 2*linsys.C) # beta - beta
-        ind_term[2]   = 2*(linsys.O - linsys.P)     # beta
+        sys_mat[2, 2] = 4*(linsys.G[0] + linsys.F[0] - 2*linsys.C[0]) # beta - beta
+        ind_term[2]   = 2*(linsys.O[0] - linsys.P[0])                 # beta
         
         for ii, band_i in enumerate(self.bands):
             idx_i = self.inst[band_i]['alpha idx']
             
             # As - alpha_i 
             As_ai = np.sum(linsys.nu_ij[:,ii]) - np.sum(linsys.psi_ij[ii,:])
-            sys_mat[0, idx_i+res.ext_par] += 2*As_ai; sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*As_ai
+            sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
 
             # Ad - alpha_i
             Ad_ai = np.sum(linsys.sigma_ij[:,ii]) - np.sum(linsys.omega_ij[ii,:])
-            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai; sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
+            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
 
             # beta - alpha_i
             b_a = np.sum(linsys.tau_ij[:,ii]) + np.sum(linsys.epsilon_ij[ii,:]) - np.sum(linsys.varphi_ij[:,ii]) - np.sum(linsys.ene_ij[ii,:])
-            sys_mat[2, idx_i+res.ext_par] += 4*b_a; sys_mat[idx_i+res.ext_par, 2] += 4*b_a
+            sys_mat[2, idx_i+res.ext_par] += 4*b_a
+            sys_mat[idx_i+res.ext_par, 2] += 4*b_a
 
             # alpha_i
             ind_term[idx_i+res.ext_par] += 2*(np.sum(linsys.D_ij[:,ii]) - np.sum(linsys.H_ij[ii,:]))
@@ -2288,7 +2375,6 @@ class MLE:
             for ii, freq in enumerate(self.spec.freqs):
                 res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
                 res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
-        
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
@@ -2300,43 +2386,51 @@ class MLE:
         ind_term = np.zeros(res.Nvar, dtype=np.float64)
         
         # variables ordered as As, Ad, Asd, beta, alpha_i
-        sys_mat[0, 0] = linsys.S                                # As - As
-        sys_mat[0, 1] = linsys.W               ; sys_mat[1, 0] = linsys.W       # As - Ad
-        sys_mat[0, 2] = linsys.Q + linsys.V    ; sys_mat[2, 0] = linsys.Q + linsys.V     # As - Asd
-        sys_mat[0, 3] = 2*(linsys.X - linsys.Y); sys_mat[3, 0] = 2*(linsys.X - linsys.Y) # As - beta
-        ind_term[0]   = linsys.J                                # As
+        sys_mat[0, 0] = linsys.S[0]                                # As - As
+        sys_mat[0, 1] = linsys.W[0]; sys_mat[1, 0] = linsys.W[0]   # As - Ad
+        sys_mat[0, 2] = linsys.Q[0] + linsys.V[0]                  # As - Asd
+        sys_mat[2, 0] = linsys.Q[0] + linsys.V[0]     
+        sys_mat[0, 3] = 2*(linsys.X[0] - linsys.Y[0])              # As - beta
+        sys_mat[3, 0] = 2*(linsys.X[0] - linsys.Y[0]) 
+        ind_term[0]   = linsys.J[0]                                # As
 
-        sys_mat[1, 1] = linsys.R                                            # Ad - Ad
-        sys_mat[1, 2] = linsys.K + linsys.xi         ; sys_mat[2, 1] = linsys.K + linsys.xi          # Ad - Asd
-        sys_mat[1, 3] = 2*(linsys.LAMBDA - linsys.mu); sys_mat[3, 1] = 2*(linsys.LAMBDA - linsys.mu) # Ad - beta
-        ind_term[1]   = linsys.N                                            # Ad
+        sys_mat[1, 1] = linsys.R[0]                                # Ad - Ad
+        sys_mat[1, 2] = linsys.K[0] + linsys.xi[0]                 # Ad - Asd   
+        sys_mat[2, 1] = linsys.K[0] + linsys.xi[0]           
+        sys_mat[1, 3] = 2*(linsys.LAMBDA[0] - linsys.mu[0])        # Ad - beta
+        sys_mat[3, 1] = 2*(linsys.LAMBDA[0] - linsys.mu[0]) 
+        ind_term[1]   = linsys.N[0]                                # Ad
         
-        sys_mat[2, 2] = linsys.T + linsys.U + 2*linsys.Z                            # Asd - Asd
-        sys_mat[2, 3] = 2*(linsys.DELTA - linsys.delta + linsys.eta - linsys.theta)
-        sys_mat[3, 2] = 2*(linsys.DELTA - linsys.delta + linsys.eta - linsys.theta) # Asd - beta
-        ind_term[2]   = linsys.M + linsys.L                                          # Asd
+        sys_mat[2, 2] = linsys.T[0] + linsys.U[0] + 2*linsys.Z[0]  # Asd - Asd
+        sys_mat[2, 3] = 2*(linsys.DELTA[0] - linsys.delta[0] + linsys.eta[0] - linsys.theta[0]) # Asd - beta
+        sys_mat[3, 2] = 2*(linsys.DELTA[0] - linsys.delta[0] + linsys.eta[0] - linsys.theta[0]) 
+        ind_term[2]   = linsys.M[0] + linsys.L[0]                  # Asd
                                                            
-        sys_mat[3, 3] = 4*(linsys.G + linsys.F - 2*linsys.C) # beta - beta
-        ind_term[3]   = 2*(linsys.O - linsys.P)     # beta
+        sys_mat[3, 3] = 4*(linsys.G[0] + linsys.F[0] - 2*linsys.C[0]) # beta - beta
+        ind_term[3]   = 2*(linsys.O[0] - linsys.P[0])                 # beta
         
         for ii, band_i in enumerate(self.bands):
             idx_i = self.inst[band_i]['alpha idx']
             
             # As - alpha_i 
             As_ai = np.sum(linsys.nu_ij[:,ii]) - np.sum(linsys.psi_ij[ii,:])
-            sys_mat[0, idx_i+res.ext_par] += 2*As_ai; sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
+            sys_mat[0, idx_i+res.ext_par] += 2*As_ai
+            sys_mat[idx_i+res.ext_par, 0] += 2*As_ai
 
             # Ad - alpha_i
             Ad_ai = np.sum(linsys.sigma_ij[:,ii]) - np.sum(linsys.omega_ij[ii,:])
-            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai; sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
+            sys_mat[1, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[idx_i+res.ext_par, 1] += 2*Ad_ai
 
             # Asd - alpha_i
             Asd_ai = np.sum(linsys.pi_ij[:,ii]) + np.sum(linsys.rho_ij[:,ii]) - np.sum(linsys.phi_ij[ii,:]) - np.sum(linsys.OMEGA_ij[ii,:])
-            sys_mat[2, idx_i+res.ext_par] += 2*Asd_ai; sys_mat[idx_i+res.ext_par, 2] += 2*Asd_ai
+            sys_mat[2, idx_i+res.ext_par] += 2*Asd_ai
+            sys_mat[idx_i+res.ext_par, 2] += 2*Asd_ai
 
             # beta - alpha_i
             b_a = np.sum(linsys.tau_ij[:,ii]) + np.sum(linsys.epsilon_ij[ii,:]) - np.sum(linsys.varphi_ij[:,ii]) - np.sum(linsys.ene_ij[ii,:])
-            sys_mat[3, idx_i+res.ext_par] += 4*b_a; sys_mat[idx_i+res.ext_par, 3] += 4*b_a
+            sys_mat[3, idx_i+res.ext_par] += 4*b_a
+            sys_mat[idx_i+res.ext_par, 3] += 4*b_a
 
             # alpha_i
             ind_term[idx_i+res.ext_par] += 2*(np.sum(linsys.D_ij[:,ii]) - np.sum(linsys.H_ij[ii,:]))
@@ -2366,7 +2460,6 @@ class MLE:
             for ii, freq in enumerate(self.spec.freqs):
                 res.ml[f"Iter {Niter+1}"][freq]         = ang_now[ii+res.ext_par]
                 res.std_fisher[f"Iter {Niter+1}"][freq] = std_now[ii+res.ext_par]
-        
         if np.any( np.isnan(std_now) ):
             raise StopIteration()
 
@@ -2419,7 +2512,6 @@ class MLE:
         if return_result:
             return res
    
-    
     def result_name(self, idx):
         path     = self.libdir
         fit_tag  = f"{self.fit.replace(' + ','_')}{'_sameAlphaPerSplit' if self.alpha_per_split else '_diffAlphaPerSplit'}{'_rmSameTube' if self.rm_same_tube else ''}{'_tempBP'if self.spec.temp_bp else ''}" 
@@ -2427,7 +2519,6 @@ class MLE:
         spec_tag = f"aposcale{str(self.spec.aposcale).replace('.','p')}{'_CO' if self.spec.CO else ''}{'_PS' if self.spec.PS else ''}{'_pureB' if self.spec.pureB else ''}_N{self.nside}"
         return f"{path}/ml_params_{fit_tag}_{bin_tag}_{spec_tag}_{idx:03d}.pkl"
        
-        
     def estimate_angles(self, idx, overwrite=False, Niter=-1):
         file = self.result_name(idx)
         if (not os.path.isfile(file)) or overwrite:
@@ -2442,16 +2533,20 @@ class MLE:
             else:
                 params[var] = res.ml[f"Iter {max_iter-1 if Niter==-1 else Niter}"][var]
         return  params
-
+    
+    
 
 class S2N:
     
-    def __init__(self, libdir, nside, atm_noise, nsplits, dust, sync, 
+    def __init__(self, libdir, mode, nside, atm_noise, nsplits, dust, sync, 
                  template_bandpass, fit, bmin, bmax, alpha_per_split, rm_same_tube,
-                 bandpass=True, aposcale=2.0, CO=True, PS=True, pureB=True):
+                 bandpass=True, aposcale=2.0, CO=True, PS=True, pureB=True,
+                 window=5, binwidth=20):
         
         self.libdir    = libdir+'/S2N'
         os.makedirs(self.libdir, exist_ok=True)
+        self.mode      = mode
+        self.window    = window
         self.nside     = nside
         self.atm_noise = atm_noise
         self.dust      = dust
@@ -2465,8 +2560,8 @@ class S2N:
 
         # create specific simulations for s/n calculation
         # fixed values for the calculation of the s/n
-        self.beta            = 0.3
-        self.alpha           = 0.3
+        self.beta            = 0.3 # deg
+        self.alpha           = 0.3 # deg
         self.idx             = 0
         self.sky             = LATsky(self.libdir, nside, self.beta, dust, sync, 
                                 self.alpha, atm_noise, nsplits, self.bp)
@@ -2481,9 +2576,9 @@ class S2N:
         self.mle             = MLE(self.libdir, self.spec, fit, 
                                    alpha_per_split=alpha_per_split, 
                                    rm_same_tube=rm_same_tube, 
-                                   bmax=bmax, bmin=bmin)
+                                   bmax=bmax, bmin=bmin, binwidth=binwidth)
         
-        
+          
     def s2n_ell(self, iC, Niter, res):
         if self.fit=="alpha":
             return self.__s2n_ell_alpha__(iC, Niter, res)
@@ -2501,13 +2596,424 @@ class S2N:
             return self.__s2n_ell_As_Asd_Ad_alpha__(iC, Niter, res)
         elif self.fit=="As + Asd + Ad + beta + alpha":
             return self.__s2n_ell_As_Asd_Ad_beta_alpha__(iC, Niter, res)
+
+    def __s2n_ell_alpha__(self, iC, Niter, res):
+        linsys = LinearSystem(self.mle, iC, mode=self.mode, window=self.window)
+        linsys.compute_terms()
+        # build system matrix
+        sys_mat =np.zeros((linsys.ext_dim, res.Nvar, res.Nvar), dtype=np.float64)
+        # variables ordered as alpha_i
+        for ii, band_i in enumerate(self.mle.bands):
+            idx_i = self.mle.inst[band_i]['alpha idx']
+            for jj, band_j in enumerate(self.mle.bands):
+                idx_j = self.mle.inst[band_j]['alpha idx']
+                for ll in range(0, linsys.ext_dim, 1):
+                    # alpha_i - alpha_j terms
+                    aux1 = np.sum(linsys.E_ijpq[:, jj, :, ii, ll]) + np.sum(linsys.E_ijpq[:, ii, :, jj, ll])
+                    aux2 = np.sum(linsys.B_ijpq[jj, :, ii, :, ll]) + np.sum(linsys.B_ijpq[ii, :, jj, :, ll])
+                    aux3 = np.sum(linsys.I_ijpq[jj, :, :, ii, ll]) + np.sum(linsys.I_ijpq[ii, :, :, jj, ll])
+                    sys_mat[ll, idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                    
+        # cov_ell = np.linalg.pinv(sys_mat) # risky alternative 
+        cov_ell = np.linalg.inv(sys_mat)
+        std_ell = np.sqrt(np.diagonal(cov_ell, axis1=1, axis2=2))
+        if np.any( np.isnan(std_ell) ):
+            raise StopIteration()
+            
+        s2n = {}
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.mle.bands):
+                s2n[band] = res.ml[f"Iter {Niter}"][band]/std_ell[:,ii+res.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                s2n[freq] = res.ml[f"Iter {Niter}"][freq]/std_ell[:,ii+res.ext_par]
+                
+        return s2n
+   
+    def __s2n_ell_Ad_alpha__(self, iC, Niter, res):
+        linsys = LinearSystem(self.mle, iC, mode=self.mode, window=self.window)
+        linsys.compute_terms()
+        # build system matrix
+        sys_mat =np.zeros((linsys.ext_dim, res.Nvar, res.Nvar), dtype=np.float64)
+        # variables ordered as Ad, alpha_i
+        sys_mat[:, 0, 0] = linsys.R  # Ad - Ad        
+        for ii, band_i in enumerate(self.mle.bands):
+            idx_i = self.mle.inst[band_i]['alpha idx']
+            # Ad - alpha_i
+            Ad_ai = np.sum(linsys.sigma_ij[:,ii,:], axis=0) - np.sum(linsys.omega_ij[ii,:,:], axis=0)
+            sys_mat[:, 0, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[:, idx_i+res.ext_par, 0] += 2*Ad_ai            
+            for jj, band_j in enumerate(self.mle.bands):
+                idx_j = self.mle.inst[band_j]['alpha idx']
+                for ll in range(0, linsys.ext_dim, 1):
+                    # alpha_i - alpha_j terms
+                    aux1 = np.sum(linsys.E_ijpq[:, jj, :, ii, ll]) + np.sum(linsys.E_ijpq[:, ii, :, jj, ll])
+                    aux2 = np.sum(linsys.B_ijpq[jj, :, ii, :, ll]) + np.sum(linsys.B_ijpq[ii, :, jj, :, ll])
+                    aux3 = np.sum(linsys.I_ijpq[jj, :, :, ii, ll]) + np.sum(linsys.I_ijpq[ii, :, :, jj, ll])
+                    sys_mat[ll, idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                    
+        # cov_ell = np.linalg.pinv(sys_mat) # risky alternative 
+        cov_ell = np.linalg.inv(sys_mat)
+        std_ell = np.sqrt(np.diagonal(cov_ell, axis1=1, axis2=2))
+        if np.any( np.isnan(std_ell) ):
+            raise StopIteration()
+            
+        s2n = { "Ad":  res.ml[f"Iter {Niter}"]["Ad"]  /std_ell[:,0]}
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.mle.bands):
+                s2n[band] = res.ml[f"Iter {Niter}"][band]/std_ell[:,ii+res.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                s2n[freq] = res.ml[f"Iter {Niter}"][freq]/std_ell[:,ii+res.ext_par]
+                
+        return s2n
+            
+    def __s2n_ell_beta_alpha__(self, iC, Niter, res):
+        linsys = LinearSystem(self.mle, iC, mode=self.mode, window=self.window)
+        linsys.compute_terms()
+        # build system matrix
+        sys_mat =np.zeros((linsys.ext_dim, res.Nvar, res.Nvar), dtype=np.float64)
+        # variables ordered as beta, alpha_i
+        sys_mat[:, 0, 0] = 4*(linsys.G + linsys.F - 2*linsys.C) # beta - beta
         
+        for ii, band_i in enumerate(self.mle.bands):
+            idx_i = self.mle.inst[band_i]['alpha idx']
+            # beta - alpha_i
+            b_a = np.sum(linsys.tau_ij[:,ii,:], axis=0) + np.sum(linsys.epsilon_ij[ii,:,:], axis=0) - np.sum(linsys.varphi_ij[:,ii,:], axis=0) - np.sum(linsys.ene_ij[ii,:,:], axis=0)
+            sys_mat[:, 0, idx_i+res.ext_par] += 4*b_a
+            sys_mat[:, idx_i+res.ext_par, 0] += 4*b_a
+            
+            for jj, band_j in enumerate(self.mle.bands):
+                idx_j = self.mle.inst[band_j]['alpha idx']
+                for ll in range(0, linsys.ext_dim, 1):
+                    # alpha_i - alpha_j terms
+                    aux1 = np.sum(linsys.E_ijpq[:, jj, :, ii, ll]) + np.sum(linsys.E_ijpq[:, ii, :, jj, ll])
+                    aux2 = np.sum(linsys.B_ijpq[jj, :, ii, :, ll]) + np.sum(linsys.B_ijpq[ii, :, jj, :, ll])
+                    aux3 = np.sum(linsys.I_ijpq[jj, :, :, ii, ll]) + np.sum(linsys.I_ijpq[ii, :, :, jj, ll])
+                    sys_mat[ll, idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                    
+        # cov_ell = np.linalg.pinv(sys_mat) # risky alternative 
+        cov_ell = np.linalg.inv(sys_mat)
+        std_ell = np.sqrt(np.diagonal(cov_ell, axis1=1, axis2=2))
+        if np.any( np.isnan(std_ell) ):
+            raise StopIteration()
+            
+        s2n = { "beta":res.ml[f"Iter {Niter}"]["beta"]/std_ell[:,3] }
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.mle.bands):
+                s2n[band] = res.ml[f"Iter {Niter}"][band]/std_ell[:,ii+res.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                s2n[freq] = res.ml[f"Iter {Niter}"][freq]/std_ell[:,ii+res.ext_par]
+                
+        return s2n
+            
+    def __s2n_ell_As_Ad_alpha__(self, iC, Niter, res):
+        linsys = LinearSystem(self.mle, iC, mode=self.mode, window=self.window)
+        linsys.compute_terms()
+        # build system matrix
+        sys_mat =np.zeros((linsys.ext_dim, res.Nvar, res.Nvar), dtype=np.float64)
+        # variables ordered as As, Ad, alpha_i
+        sys_mat[:, 0, 0] = linsys.S                              # As - As
+        sys_mat[:, 0, 1] = linsys.W; sys_mat[:, 1, 0] = linsys.W # As - Ad
+
+        sys_mat[:, 1, 1] = linsys.R                              # Ad - Ad
         
-    def calculate(self,  cumulative=False, return_result=False):
-        # this function always saves the result? 
+        for ii, band_i in enumerate(self.mle.bands):
+            idx_i = self.mle.inst[band_i]['alpha idx']
+            
+            # As - alpha_i 
+            As_ai = np.sum(linsys.nu_ij[:,ii,:], axis=0) - np.sum(linsys.psi_ij[ii,:,:], axis=0)
+            sys_mat[:, 0, idx_i+res.ext_par] += 2*As_ai
+            sys_mat[:, idx_i+res.ext_par, 0] += 2*As_ai
+
+            # Ad - alpha_i
+            Ad_ai = np.sum(linsys.sigma_ij[:,ii,:], axis=0) - np.sum(linsys.omega_ij[ii,:,:], axis=0)
+            sys_mat[:, 1, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[:, idx_i+res.ext_par, 1] += 2*Ad_ai
+
+            for jj, band_j in enumerate(self.mle.bands):
+                idx_j = self.mle.inst[band_j]['alpha idx']
+                for ll in range(0, linsys.ext_dim, 1):
+                    # alpha_i - alpha_j terms
+                    aux1 = np.sum(linsys.E_ijpq[:, jj, :, ii, ll]) + np.sum(linsys.E_ijpq[:, ii, :, jj, ll])
+                    aux2 = np.sum(linsys.B_ijpq[jj, :, ii, :, ll]) + np.sum(linsys.B_ijpq[ii, :, jj, :, ll])
+                    aux3 = np.sum(linsys.I_ijpq[jj, :, :, ii, ll]) + np.sum(linsys.I_ijpq[ii, :, :, jj, ll])
+                    sys_mat[ll, idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                    
+        # cov_ell = np.linalg.pinv(sys_mat) # risky alternative 
+        cov_ell = np.linalg.inv(sys_mat)
+        std_ell = np.sqrt(np.diagonal(cov_ell, axis1=1, axis2=2))
+        if np.any( np.isnan(std_ell) ):
+            raise StopIteration()
+            
+        s2n = { "As":  res.ml[f"Iter {Niter}"]["As"]  /std_ell[:,0],
+                "Ad":  res.ml[f"Iter {Niter}"]["Ad"]  /std_ell[:,1]}
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.mle.bands):
+                s2n[band] = res.ml[f"Iter {Niter}"][band]/std_ell[:,ii+res.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                s2n[freq] = res.ml[f"Iter {Niter}"][freq]/std_ell[:,ii+res.ext_par]
+                
+        return s2n
+                    
+    def __s2n_ell_Ad_beta_alpha__(self, iC, Niter, res):
+        linsys = LinearSystem(self.mle, iC, mode=self.mode, window=self.window)
+        linsys.compute_terms()
+        # build system matrix
+        sys_mat =np.zeros((linsys.ext_dim, res.Nvar, res.Nvar), dtype=np.float64)
+        # variables ordered as Ad, beta, alpha_i
+        sys_mat[:, 0, 0] = linsys.R                              # Ad - Ad
+        sys_mat[:, 0, 1] = 2*(linsys.LAMBDA - linsys.mu)         # Ad - beta
+        sys_mat[:, 1, 0] = 2*(linsys.LAMBDA - linsys.mu) 
+        
+        sys_mat[:, 1, 1] = 4*(linsys.G + linsys.F - 2*linsys.C) # beta - beta
+        
+        for ii, band_i in enumerate(self.mle.bands):
+            idx_i = self.mle.inst[band_i]['alpha idx']
+            # Ad - alpha_i
+            Ad_ai = np.sum(linsys.sigma_ij[:,ii,:], axis=0) - np.sum(linsys.omega_ij[ii,:,:], axis=0)
+            sys_mat[:, 0, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[:, idx_i+res.ext_par, 0] += 2*Ad_ai
+
+            # beta - alpha_i
+            b_a = np.sum(linsys.tau_ij[:,ii,:], axis=0) + np.sum(linsys.epsilon_ij[ii,:,:], axis=0) - np.sum(linsys.varphi_ij[:,ii,:], axis=0) - np.sum(linsys.ene_ij[ii,:,:], axis=0)
+            sys_mat[:, 1, idx_i+res.ext_par] += 4*b_a
+            sys_mat[:, idx_i+res.ext_par, 1] += 4*b_a
+            
+            for jj, band_j in enumerate(self.mle.bands):
+                idx_j = self.mle.inst[band_j]['alpha idx']
+                for ll in range(0, linsys.ext_dim, 1):
+                    # alpha_i - alpha_j terms
+                    aux1 = np.sum(linsys.E_ijpq[:, jj, :, ii, ll]) + np.sum(linsys.E_ijpq[:, ii, :, jj, ll])
+                    aux2 = np.sum(linsys.B_ijpq[jj, :, ii, :, ll]) + np.sum(linsys.B_ijpq[ii, :, jj, :, ll])
+                    aux3 = np.sum(linsys.I_ijpq[jj, :, :, ii, ll]) + np.sum(linsys.I_ijpq[ii, :, :, jj, ll])
+                    sys_mat[ll, idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                    
+        # cov_ell = np.linalg.pinv(sys_mat) # risky alternative 
+        cov_ell = np.linalg.inv(sys_mat)
+        std_ell = np.sqrt(np.diagonal(cov_ell, axis1=1, axis2=2))
+        if np.any( np.isnan(std_ell) ):
+            raise StopIteration()
+            
+        s2n = { "Ad":  res.ml[f"Iter {Niter}"]["Ad"]  /std_ell[:,1],
+                "beta":res.ml[f"Iter {Niter}"]["beta"]/std_ell[:,3] }
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.mle.bands):
+                s2n[band] = res.ml[f"Iter {Niter}"][band]/std_ell[:,ii+res.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                s2n[freq] = res.ml[f"Iter {Niter}"][freq]/std_ell[:,ii+res.ext_par]
+                
+        return s2n
+
+    def __s2n_ell_As_Ad_beta_alpha__(self, iC, Niter, res):
+        linsys = LinearSystem(self.mle, iC, mode=self.mode, window=self.window)
+        linsys.compute_terms()
+        # build system matrix
+        sys_mat =np.zeros((linsys.ext_dim, res.Nvar, res.Nvar), dtype=np.float64)
+        # variables ordered as As, Ad, beta, alpha_i
+        sys_mat[:, 0, 0] = linsys.S                              # As - As
+        sys_mat[:, 0, 1] = linsys.W; sys_mat[:, 1, 0] = linsys.W # As - Ad
+        sys_mat[:, 0, 2] = 2*(linsys.X - linsys.Y)               # As - beta
+        sys_mat[:, 2, 0] = 2*(linsys.X - linsys.Y)
+
+        sys_mat[:, 1, 1] = linsys.R                              # Ad - Ad
+        sys_mat[:, 1, 2] = 2*(linsys.LAMBDA - linsys.mu)         # Ad - beta
+        sys_mat[:, 2, 1] = 2*(linsys.LAMBDA - linsys.mu) 
+        
+        sys_mat[:, 2, 2] = 4*(linsys.G + linsys.F - 2*linsys.C) # beta - beta
+        
+        for ii, band_i in enumerate(self.mle.bands):
+            idx_i = self.mle.inst[band_i]['alpha idx']
+            
+            # As - alpha_i 
+            As_ai = np.sum(linsys.nu_ij[:,ii,:], axis=0) - np.sum(linsys.psi_ij[ii,:,:], axis=0)
+            sys_mat[:, 0, idx_i+res.ext_par] += 2*As_ai
+            sys_mat[:, idx_i+res.ext_par, 0] += 2*As_ai
+
+            # Ad - alpha_i
+            Ad_ai = np.sum(linsys.sigma_ij[:,ii,:], axis=0) - np.sum(linsys.omega_ij[ii,:,:], axis=0)
+            sys_mat[:, 1, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[:, idx_i+res.ext_par, 1] += 2*Ad_ai
+
+            # beta - alpha_i
+            b_a = np.sum(linsys.tau_ij[:,ii,:], axis=0) + np.sum(linsys.epsilon_ij[ii,:,:], axis=0) - np.sum(linsys.varphi_ij[:,ii,:], axis=0) - np.sum(linsys.ene_ij[ii,:,:], axis=0)
+            sys_mat[:, 2, idx_i+res.ext_par] += 4*b_a
+            sys_mat[:, idx_i+res.ext_par, 2] += 4*b_a
+            
+            for jj, band_j in enumerate(self.mle.bands):
+                idx_j = self.mle.inst[band_j]['alpha idx']
+                for ll in range(0, linsys.ext_dim, 1):
+                    # alpha_i - alpha_j terms
+                    aux1 = np.sum(linsys.E_ijpq[:, jj, :, ii, ll]) + np.sum(linsys.E_ijpq[:, ii, :, jj, ll])
+                    aux2 = np.sum(linsys.B_ijpq[jj, :, ii, :, ll]) + np.sum(linsys.B_ijpq[ii, :, jj, :, ll])
+                    aux3 = np.sum(linsys.I_ijpq[jj, :, :, ii, ll]) + np.sum(linsys.I_ijpq[ii, :, :, jj, ll])
+                    sys_mat[ll, idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                    
+        # cov_ell = np.linalg.pinv(sys_mat) # risky alternative 
+        cov_ell = np.linalg.inv(sys_mat)
+        std_ell = np.sqrt(np.diagonal(cov_ell, axis1=1, axis2=2))
+        if np.any( np.isnan(std_ell) ):
+            raise StopIteration()
+            
+        s2n = { "As":  res.ml[f"Iter {Niter}"]["As"]  /std_ell[:,0],
+                "Ad":  res.ml[f"Iter {Niter}"]["Ad"]  /std_ell[:,1],
+                "beta":res.ml[f"Iter {Niter}"]["beta"]/std_ell[:,2] }
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.mle.bands):
+                s2n[band] = res.ml[f"Iter {Niter}"][band]/std_ell[:,ii+res.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                s2n[freq] = res.ml[f"Iter {Niter}"][freq]/std_ell[:,ii+res.ext_par]
+                
+        return s2n
+      
+    def __s2n_ell_As_Asd_Ad_alpha__(self, iC, Niter, res):
+        linsys = LinearSystem(self.mle, iC, mode=self.mode, window=self.window)
+        linsys.compute_terms()
+        # build system matrix
+        sys_mat =np.zeros((linsys.ext_dim, res.Nvar, res.Nvar), dtype=np.float64)
+        # variables ordered as As, Ad, Asd, alpha_i
+        sys_mat[:, 0, 0] = linsys.S                              # As - As
+        sys_mat[:, 0, 1] = linsys.W; sys_mat[:, 1, 0] = linsys.W # As - Ad
+        sys_mat[:, 0, 2] = linsys.Q + linsys.V                   # As - Asd
+        sys_mat[:, 2, 0] = linsys.Q + linsys.V     
+
+        sys_mat[:, 1, 1] = linsys.R                              # Ad - Ad
+        sys_mat[:, 1, 2] = linsys.K + linsys.xi                  # Ad - Asd   
+        sys_mat[:, 2, 1] = linsys.K + linsys.xi           
+        
+        sys_mat[:, 2, 2] = linsys.T + linsys.U + 2*linsys.Z      # Asd - Asd
+        
+        for ii, band_i in enumerate(self.mle.bands):
+            idx_i = self.mle.inst[band_i]['alpha idx']
+            
+            # As - alpha_i 
+            As_ai = np.sum(linsys.nu_ij[:,ii,:], axis=0) - np.sum(linsys.psi_ij[ii,:,:], axis=0)
+            sys_mat[:, 0, idx_i+res.ext_par] += 2*As_ai
+            sys_mat[:, idx_i+res.ext_par, 0] += 2*As_ai
+
+            # Ad - alpha_i
+            Ad_ai = np.sum(linsys.sigma_ij[:,ii,:], axis=0) - np.sum(linsys.omega_ij[ii,:,:], axis=0)
+            sys_mat[:, 1, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[:, idx_i+res.ext_par, 1] += 2*Ad_ai
+
+            # Asd - alpha_i
+            Asd_ai = np.sum(linsys.pi_ij[:,ii,:], axis=0) + np.sum(linsys.rho_ij[:,ii,:], axis=0) - np.sum(linsys.phi_ij[ii,:,:], axis=0) - np.sum(linsys.OMEGA_ij[ii,:,:], axis=0)
+            sys_mat[:, 2, idx_i+res.ext_par] += 2*Asd_ai
+            sys_mat[:, idx_i+res.ext_par, 2] += 2*Asd_ai
+            
+            for jj, band_j in enumerate(self.mle.bands):
+                idx_j = self.mle.inst[band_j]['alpha idx']
+                for ll in range(0, linsys.ext_dim, 1):
+                    # alpha_i - alpha_j terms
+                    aux1 = np.sum(linsys.E_ijpq[:, jj, :, ii, ll]) + np.sum(linsys.E_ijpq[:, ii, :, jj, ll])
+                    aux2 = np.sum(linsys.B_ijpq[jj, :, ii, :, ll]) + np.sum(linsys.B_ijpq[ii, :, jj, :, ll])
+                    aux3 = np.sum(linsys.I_ijpq[jj, :, :, ii, ll]) + np.sum(linsys.I_ijpq[ii, :, :, jj, ll])
+                    sys_mat[ll, idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                    
+        # cov_ell = np.linalg.pinv(sys_mat) # risky alternative 
+        cov_ell = np.linalg.inv(sys_mat)
+        std_ell = np.sqrt(np.diagonal(cov_ell, axis1=1, axis2=2))
+        if np.any( np.isnan(std_ell) ):
+            raise StopIteration()
+            
+        s2n = { "As":  res.ml[f"Iter {Niter}"]["As"]  /std_ell[:,0],
+                "Ad":  res.ml[f"Iter {Niter}"]["Ad"]  /std_ell[:,1],
+                "Asd": res.ml[f"Iter {Niter}"]["Asd"] /std_ell[:,2]}
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.mle.bands):
+                s2n[band] = res.ml[f"Iter {Niter}"][band]/std_ell[:,ii+res.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                s2n[freq] = res.ml[f"Iter {Niter}"][freq]/std_ell[:,ii+res.ext_par]
+                
+        return s2n
+    
+    def __s2n_ell_As_Asd_Ad_beta_alpha__(self, iC, Niter, res):
+        linsys = LinearSystem(self.mle, iC, mode=self.mode, window=self.window)
+        linsys.compute_terms()
+        # build system matrix
+        sys_mat =np.zeros((linsys.ext_dim, res.Nvar, res.Nvar), dtype=np.float64)
+        # variables ordered as As, Ad, Asd, beta, alpha_i
+        sys_mat[:, 0, 0] = linsys.S                              # As - As
+        sys_mat[:, 0, 1] = linsys.W; sys_mat[:, 1, 0] = linsys.W # As - Ad
+        sys_mat[:, 0, 2] = linsys.Q + linsys.V                   # As - Asd
+        sys_mat[:, 2, 0] = linsys.Q + linsys.V     
+        sys_mat[:, 0, 3] = 2*(linsys.X - linsys.Y)               # As - beta
+        sys_mat[:, 3, 0] = 2*(linsys.X - linsys.Y)
+
+        sys_mat[:, 1, 1] = linsys.R                              # Ad - Ad
+        sys_mat[:, 1, 2] = linsys.K + linsys.xi                  # Ad - Asd   
+        sys_mat[:, 2, 1] = linsys.K + linsys.xi           
+        sys_mat[:, 1, 3] = 2*(linsys.LAMBDA - linsys.mu)         # Ad - beta
+        sys_mat[:, 3, 1] = 2*(linsys.LAMBDA - linsys.mu) 
+        
+        sys_mat[:, 2, 2] = linsys.T + linsys.U + 2*linsys.Z      # Asd - Asd
+        sys_mat[:, 2, 3] = 2*(linsys.DELTA - linsys.delta + linsys.eta - linsys.theta) # Asd - beta
+        sys_mat[:, 3, 2] = 2*(linsys.DELTA - linsys.delta + linsys.eta - linsys.theta) 
+                                                           
+        sys_mat[:, 3, 3] = 4*(linsys.G + linsys.F - 2*linsys.C) # beta - beta
+        
+        for ii, band_i in enumerate(self.mle.bands):
+            idx_i = self.mle.inst[band_i]['alpha idx']
+            
+            # As - alpha_i 
+            As_ai = np.sum(linsys.nu_ij[:,ii,:], axis=0) - np.sum(linsys.psi_ij[ii,:,:], axis=0)
+            sys_mat[:, 0, idx_i+res.ext_par] += 2*As_ai
+            sys_mat[:, idx_i+res.ext_par, 0] += 2*As_ai
+
+            # Ad - alpha_i
+            Ad_ai = np.sum(linsys.sigma_ij[:,ii,:], axis=0) - np.sum(linsys.omega_ij[ii,:,:], axis=0)
+            sys_mat[:, 1, idx_i+res.ext_par] += 2*Ad_ai
+            sys_mat[:, idx_i+res.ext_par, 1] += 2*Ad_ai
+
+            # Asd - alpha_i
+            Asd_ai = np.sum(linsys.pi_ij[:,ii,:], axis=0) + np.sum(linsys.rho_ij[:,ii,:], axis=0) - np.sum(linsys.phi_ij[ii,:,:], axis=0) - np.sum(linsys.OMEGA_ij[ii,:,:], axis=0)
+            sys_mat[:, 2, idx_i+res.ext_par] += 2*Asd_ai
+            sys_mat[:, idx_i+res.ext_par, 2] += 2*Asd_ai
+
+            # beta - alpha_i
+            b_a = np.sum(linsys.tau_ij[:,ii,:], axis=0) + np.sum(linsys.epsilon_ij[ii,:,:], axis=0) - np.sum(linsys.varphi_ij[:,ii,:], axis=0) - np.sum(linsys.ene_ij[ii,:,:], axis=0)
+            sys_mat[:, 3, idx_i+res.ext_par] += 4*b_a
+            sys_mat[:, idx_i+res.ext_par, 3] += 4*b_a
+            
+            for jj, band_j in enumerate(self.mle.bands):
+                idx_j = self.mle.inst[band_j]['alpha idx']
+                for ll in range(0, linsys.ext_dim, 1):
+                    # alpha_i - alpha_j terms
+                    aux1 = np.sum(linsys.E_ijpq[:, jj, :, ii, ll]) + np.sum(linsys.E_ijpq[:, ii, :, jj, ll])
+                    aux2 = np.sum(linsys.B_ijpq[jj, :, ii, :, ll]) + np.sum(linsys.B_ijpq[ii, :, jj, :, ll])
+                    aux3 = np.sum(linsys.I_ijpq[jj, :, :, ii, ll]) + np.sum(linsys.I_ijpq[ii, :, :, jj, ll])
+                    sys_mat[ll, idx_i+res.ext_par, idx_j+res.ext_par] += 2*( aux1 + aux2 - 2*aux3 )
+                    
+        # cov_ell = np.linalg.pinv(sys_mat) # risky alternative 
+        cov_ell = np.linalg.inv(sys_mat)
+        std_ell = np.sqrt(np.diagonal(cov_ell, axis1=1, axis2=2))
+        if np.any( np.isnan(std_ell) ):
+            raise StopIteration()
+            
+        s2n = { "As":  res.ml[f"Iter {Niter}"]["As"]  /std_ell[:,0],
+                "Ad":  res.ml[f"Iter {Niter}"]["Ad"]  /std_ell[:,1],
+                "Asd": res.ml[f"Iter {Niter}"]["Asd"] /std_ell[:,2],
+                "beta":res.ml[f"Iter {Niter}"]["beta"]/std_ell[:,3] }
+        if self.alpha_per_split:
+            for ii, band in enumerate(self.mle.bands):
+                s2n[band] = res.ml[f"Iter {Niter}"][band]/std_ell[:,ii+res.ext_par]
+        else:
+            for ii, freq in enumerate(self.spec.freqs):
+                s2n[freq] = res.ml[f"Iter {Niter}"][freq]/std_ell[:,ii+res.ext_par]
+                
+        return s2n
+
+    def calculate(self):
+        niter = 0
         true_params = Result(self.spec, self.fit, self.idx, self.alpha_per_split, 
-                             self.rm_same_tube, self.nlb, self.bmin, self.bmax,
-                             beta_ini=self.beta, alpha_ini=self.alpha)
+                             self.rm_same_tube, self.mle.nlb, self.bmin, self.bmax,
+                             beta_ini=np.deg2rad(self.beta),
+                             alpha_ini=np.deg2rad(self.alpha))
         # read the input spectra 
         try:
             input_cls = self.spec.get_spectra(self.idx, sync='As' in self.fit)
@@ -2515,23 +3021,20 @@ class S2N:
             self.spec.compute(self.idx, sync='As' in self.fit)
             input_cls = self.spec.get_spectra(self.idx, sync='As' in self.fit)
         
-        # format cls and calculate elements of covariance matrix
-        self.process_cls(input_cls)
+        # format cls and calculate elements of covariance matrix 
+        self.mle.process_cls(input_cls)
         del input_cls # free memory
-
-        cov    = self.build_cov(0, true_params)
+        cov    = self.mle.build_cov(niter, true_params)
         invcov = np.linalg.inv(cov/self.spec.fsky)
+        # calculate signal-to-noise per multipole
         try:
-            
-            self.s2n_ell(invcov, niter, res)
-
+            s2n = self.s2n_ell(invcov, niter, true_params)
         except StopIteration:
             print('NaN in covariance')
-            converged = True
-            
-
-        #save results to disk ?
-        pl.dump(res, open(self.result_name(idx), "wb"), protocol=pl.HIGHEST_PROTOCOL)
-        if return_result:
-            return res
+        # effective ell corresponding to each bin
+        eff_ell = effective_ell(self.spec.lmax, self.mle.bin_conf)
+        if self.mode=="ell":
+            eff_ell = eff_ell[self.window//2:-self.window//2+1]
+        return eff_ell, s2n
+        
    
