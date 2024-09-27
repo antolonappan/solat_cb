@@ -15,8 +15,8 @@ from typing import Dict, Optional, Any, Union, List, Tuple
 # each helper should be sent to a different process to accelerate calculation
 
 class Spectra:
-    def __init__(self, libdir: str, lat_lib: LATsky, 
-                 aposcale: float = 1.5, template_bandpass: bool = False, pureB: bool = False,
+    def __init__(self, lat_lib: LATsky, 
+                 aposcale: float = 2.0, template_bandpass: bool = False, pureB: bool = False,
                  CO: bool = True, PS: bool = True):
         """
         Initializes the Spectra class for computing and handling power spectra of observed CMB maps.
@@ -24,7 +24,7 @@ class Spectra:
         Parameters:
         libdir (str): Directory where the spectra will be stored.
         lat_lib (LATsky): An instance of the LATsky class containing LAT-related configurations.
-        aposcale (float, optional): Apodisation scale in degrees. Defaults to 1 deg
+        aposcale (float, optional): Apodisation scale in degrees. Defaults to 2 deg
         template_bandpass (bool, optional): Apply bandpass integration to the foreground template. Defaults to False.
         pureB (bool, optional): Apply B-mode purification. Defaults to False
         CO (bool, optional): Mask the brightest regions of CO emission. Defautls to True.
@@ -32,9 +32,7 @@ class Spectra:
         """
         self.lat   = lat_lib
         self.nside = self.lat.nside
-        #TODO PDP: I feel like these files should be under the 'LAT_white_noise_2splits'
-        # directory because they are the cls of those particular simulations
-        # It will be easy to loose/mix them if they are outside
+        libdir     = self.lat.libdir
         fldname    = "_atm_noise" if self.lat.atm_noise else "_white_noise"
         libdiri    = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + fldname)
         comdir     = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + "_common")
@@ -44,7 +42,7 @@ class Spectra:
         self.lmax     = 3 * self.lat.nside - 1
         
         self.temp_bp  = template_bandpass
-        self.fg       = Foreground(libdir, self.nside, self.lat.dust_model, self.lat.sync_model, self.temp_bp)
+        self.fg       = Foreground(self.lat.foreground.libdir, self.nside, self.lat.dust_model, self.lat.sync_model, self.temp_bp)
         
         #TODO PDP: We might need some binning, let me test it
         self.binInfo  = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
@@ -251,14 +249,14 @@ class Spectra:
             cl = np.zeros(
                 (self.Nbands, self.Nbands, 3, self.Nell + 2), dtype=np.float64
             )
-            #TODO PDP: should we set masked_on_input=True? because they are
             fp_i = nmt.NmtField(
-                self.mask, self.obs_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB
+                self.mask, self.obs_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                masked_on_input=False
             )
             for jj in range(ii, self.Nbands, 1):
-                #TODO PDP: should we set masked_on_input=True? because they are
                 fp_j = nmt.NmtField(
-                    self.mask, self.obs_qu_maps[jj, :, :], lmax=self.lmax, purify_b=self.pureB,
+                    self.mask, self.obs_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
                 )
 
                 cl_ij = self.compute_master(fp_i, fp_j)  # (EiEj, EiBj, BiEj, BiBj)
@@ -320,23 +318,24 @@ class Spectra:
             f"{fg}_x_obs_{self.freqs[ii]}{'_obsBP' if self.lat.bandpass else ''}{'_tempBP' if self.temp_bp else ''}_{idx:03d}.npy",
         )
         
-        if os.path.isfile(fname):
+        if os.path.isfile(fname): 
             return np.load(fname)
         else:
             cl = np.zeros((self.Nfreq, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
-            #TODO PDP: should we set masked_on_input=True? because they are
             if fg=='dust':
                 fp_i = nmt.NmtField(
-                    self.mask, self.dust_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB
+                    self.mask, self.dust_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
                 )
             elif fg=='sync':
                 fp_i = nmt.NmtField(
-                    self.mask, self.sync_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB
+                    self.mask, self.sync_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
                 )
             for jj in range(0, self.Nbands, 1):
-                #TODO PDP: should we set masked_on_input=True? because they are
                 fp_j = nmt.NmtField(
-                    self.mask, self.obs_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB
+                    self.mask, self.obs_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
                 )
 
                 cl_ij = self.compute_master(fp_i,fp_j)  # (EiEj, EiBj, BiEj, BiBj)
@@ -420,25 +419,27 @@ class Spectra:
             cl = np.zeros(
                 (self.Nfreq, self.Nfreq, 3, self.Nell + 2), dtype=np.float64
             )
-            #TODO PDP: should we set masked_on_input=True? because they are
             if fg=='dust':
                 fp_i = nmt.NmtField(
-                    self.mask, self.dust_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB
+                    self.mask, self.dust_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
                 )
             elif fg=='sync':
                 fp_i = nmt.NmtField(
-                    self.mask, self.sync_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB
+                    self.mask, self.sync_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
                 )
                 
             for jj in range(ii, self.Nfreq, 1):
-                #TODO PDP: should we set masked_on_input=True? because they are
                 if fg=='dust':
                     fp_j = nmt.NmtField(
-                        self.mask, self.dust_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB
+                        self.mask, self.dust_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                        masked_on_input=False
                     )
                 elif fg=='sync':
                     fp_j = nmt.NmtField(
-                        self.mask, self.sync_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB
+                        self.mask, self.sync_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                        masked_on_input=False
                     )
 
                 cl_ij = self.compute_master(fp_i, fp_j)
@@ -514,14 +515,14 @@ class Spectra:
             cl = np.zeros(
                 (self.Nfreq, self.Nfreq, 4, self.Nell + 2), dtype=np.float64
             )
-            #TODO PDP: should we set masked_on_input=True? because they are
             fp_i = nmt.NmtField(
-                self.mask, self.sync_qu_maps[ii, :, :], lmax=self.lmax, purify_b=self.pureB
+                self.mask, self.sync_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                masked_on_input=False
             )
             for jj in range(0, self.Nfreq, 1):
-                #TODO PDP: should we set masked_on_input=True? because they are
                 fp_j = nmt.NmtField(
-                    self.mask, self.dust_qu_maps[jj, :, :], lmax=self.lmax, purify_b=self.pureB,
+                    self.mask, self.dust_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
                 )
 
                 cl_ij = self.compute_master(fp_i,fp_j)  # (EiEj, EiBj, BiEj, BiBj)
