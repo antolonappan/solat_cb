@@ -85,7 +85,7 @@ class QE:
         if not os.path.isfile(fname):
             QU = self.QU(idx,version=1)
             iterations = [1000]
-            stat_file = '' 
+            stat_file = 'stat.txt' 
             if test:
                 print(f"Cinv filtering is testing {idx}")
                 iterations = [10]
