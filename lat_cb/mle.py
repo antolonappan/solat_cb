@@ -1232,6 +1232,7 @@ class MLE:
 ############################################################################### 
 ### Format cls and calculate elements of covariance matrix
 
+#TODO write it in one function similar to LinearSystem to avoid unnecesary repetitions
     def process_cls(self, incls): 
         if self.fit=="alpha":
             return self.__process_cls_alpha__(incls)
