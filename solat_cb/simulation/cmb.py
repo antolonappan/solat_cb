@@ -1,4 +1,16 @@
+# This file contains the class to handle the Cosmic Microwave Background (CMB) data and simulations.
 
+# General imports
+import os
+import camb
+import numpy as np
+import pickle as pl
+import healpy as hp
+from typing import Dict, Optional, Any, Union, List
+# Local imports
+from solat_cb import mpi
+from solat_cb.utils import Logger, inrad
+from solat_cb.data import CAMB_INI, SPECTRA
 
 class CMB:
 
@@ -9,40 +21,21 @@ class CMB:
         beta: Optional[float] = None,
         Acb: Optional[float] = None,
         model: str = "iso",
+        verbose: bool = True,
     ):
-        """
-        Initialize the CMB class for handling Cosmic Microwave Background (CMB) simulations.
-
-        Parameters:
-        libdir (str): Directory where the CMB data will be stored.
-        nside (int): Resolution parameter for the HEALPix map.
-        beta (Optional[float]): Parameter for the isotropic model, should be provided if model is 'iso'.
-        Acb (Optional[float]): Parameter for the anisotropic model, should be provided if model is 'aniso'.
-        model (str): Model type, either 'iso' for isotropic or 'aniso' for anisotropic. Defaults to 'iso'.
-
-        Attributes:
-        libdir (str): Directory where CMB-related data is stored.
-        nside (int): HEALPix resolution parameter.
-        alpha (Optional[float]): Alpha parameter for isotropic model.
-        lmax (int): Maximum multipole moment, computed as 3 * nside - 1.
-        powers (Any): Loaded or computed power spectra.
-        Acb (Optional[float]): Acb parameter for anisotropic model.
-        model (str): The model type ('iso' or 'aniso').
-
-        Raises:
-        AssertionError: If required parameters for the chosen model are not provided.
-        NotImplementedError: If the 'aniso' model is selected, as it is not implemented yet.
-        """
-
+        self.logger = Logger(self.__class__.__name__, verbose=verbose)
         self.libdir = os.path.join(libdir, "CMB")
         os.makedirs(self.libdir, exist_ok=True)
         self.nside  = nside
         self.beta   = beta
         self.lmax   = 3 * nside - 1
-        spectra     = os.path.join(os.path.dirname(os.path.realpath(__file__)), "spectra.pkl")
-        if os.path.isfile(spectra):
-            self.powers = pl.load(open(spectra, "rb"))
+        SPECTRA.directory = self.libdir
+        self.__spectra_file__ = SPECTRA.fname
+        if os.path.isfile(self.__spectra_file__):
+            self.logger.log("Loading CMB power spectra from file", level="info")
+            self.powers = pl.load(open(self.__spectra_file__, "rb"))
         else:
+            self.logger.log("Computing CMB power spectra", level="info")
             self.powers = self.compute_powers()
         self.Acb    = Acb
         assert model in ["iso", "aniso"], "model should be 'iso' or 'aniso'"
@@ -58,9 +51,8 @@ class CMB:
         """
         compute the CMB power spectra using CAMB.
         """
-        ini_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), "cb.ini")
-        spectra  = os.path.join(os.path.dirname(os.path.realpath(__file__)), "spectra.pkl")
-        params   = camb.read_ini(ini_file)
+        CAMB_INI.directory = self.libdir
+        params   = CAMB_INI.data
         results  = camb.get_results(params)
         powers   = {}
         powers["cls"] = results.get_cmb_power_spectra(
@@ -70,7 +62,7 @@ class CMB:
             params, CMB_unit="muK", raw_cl=False
         )
         if mpi.rank == 0:
-            pl.dump(powers, open(spectra, "wb"))
+            pl.dump(powers, open(self.__spectra_file__, "wb"))
         mpi.barrier()
         return powers
 
@@ -241,5 +233,5 @@ class CMB:
             )
             del T
             QU = hp.alm2map_spin([E, B], self.nside, 2, lmax=self.lmax)
-            hp.write_map(fname, QU, dtype=np.float64)
+            hp.write_map(fname, QU, dtype=np.float32)
             return QU

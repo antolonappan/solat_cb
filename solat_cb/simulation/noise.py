@@ -1,5 +1,10 @@
-# PDP: quite outdated model, we should consider at least updating it to v3.1.2
-# at some point
+import numpy as np
+import healpy as hp 
+from typing import Dict, Optional, Any, Union, List, Tuple
+
+from solat_cb import mpi
+from solat_cb.utils import Logger
+
 def SO_LAT_Nell_v3_0_0(
     sensitivity_mode: int,
     f_sky: float,
@@ -144,12 +149,15 @@ def SO_LAT_Nell_v3_0_0(
 
 
 
-
-
-
 class Noise:
 
-    def __init__(self, nside: int, fsky: float, atm_noise: bool = False, nsplits: int = 2):
+    def __init__(self, 
+                 nside: int, 
+                 fsky: float, 
+                 atm_noise: bool = False, 
+                 nsplits: int = 2,
+                 verbose: bool = True,
+                 ) -> None:
         """
         Initializes the Noise class for generating noise maps with or without atmospheric noise.
 
@@ -165,10 +173,11 @@ class Noise:
         self.atm_noise        = atm_noise
         self.nsplits          = nsplits
         self.Nell             = SO_LAT_Nell_v3_0_0(self.sensitivity_mode, fsky, self.lmax, self.atm_noise)
+        self.logger           = Logger(self.__class__.__name__, verbose)
         if atm_noise:
-             print("Noise Model: Atmospheric noise v3.0.0")
+            self.logger.log("Noise Model: White + 1/f noise v3.0.0")
         else:
-             print("Noise Model: White noise v3.0.0")
+            self.logger.log("Noise Model: White noise v3.0.0")
 
     @property
     def rand_alm(self) -> np.ndarray:

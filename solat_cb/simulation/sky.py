@@ -1,19 +1,12 @@
 import numpy as np
 import healpy as hp
-import pysm3
-from pysm3 import units as u
-import camb
 import os
-import pickle as pl
 from tqdm import tqdm
 from solat_cb import mpi
-import matplotlib.pyplot as plt  
-from typing import Dict, Optional, Any, Union, List, Tuple
-import requests
+from typing import Union, List
 
-
-
-
+from solat_cb.simulation import CMB, Foreground, Mask, Noise
+from solat_cb.utils import Logger, inrad
 
 
 #TODO at the moment doesn't support anisotropic birefringence
@@ -42,6 +35,7 @@ class LATsky:
         atm_noise: bool = False,
         nsplits: int = 2,
         bandpass: bool = False,
+        verbose: bool = True,
     ):
         """
         Initializes the LATsky class for generating and handling Large Aperture Telescope (LAT) sky simulations.
@@ -58,8 +52,13 @@ class LATsky:
         nsplits (int, optional): Number of data splits to consider. Defaults to 2.
         bandpass (bool, optional): If True, applies bandpass integration. Defaults to False.
         """
+        self.logger = Logger(self.__class__.__name__, verbose)
+        self.verbose = verbose
+
+
         fldname     = "_atm_noise" if atm_noise else "_white_noise"
         fldname    += f"_{nsplits}splits"
+        self.basedir = libdir
         self.libdir = os.path.join(libdir, "LAT" + fldname)
         os.makedirs(self.libdir+'/obs', exist_ok=True)
 
@@ -70,13 +69,13 @@ class LATsky:
                 self.config[f'{self.freqs[band]}-{split+1}'] = {"fwhm": self.fwhm[band], "opt. tube": self.tube[band]}
         self.nside      = nside
         self.beta       = beta
-        self.cmb        = CMB(libdir, nside, beta)
-        self.foreground = Foreground(libdir, nside, dust, synch, bandpass)
+        self.cmb        = CMB(libdir, nside, beta,verbose=self.verbose)
+        self.foreground = Foreground(libdir, nside, dust, synch, bandpass,verbose=self.verbose)
         self.dust_model = dust
         self.sync_model = synch
         self.nsplits    = nsplits
         self.mask, self.fsky = self.__set_mask_fsky__(libdir)
-        self.noise      = Noise(nside, self.fsky, atm_noise, nsplits)
+        self.noise      = Noise(nside, self.fsky, atm_noise, nsplits,verbose=self.verbose)
 
         if isinstance(alpha, (list, np.ndarray)):
             assert len(alpha) == len(
@@ -93,12 +92,10 @@ class LATsky:
         self.alpha     = alpha
         self.atm_noise = atm_noise
         self.bandpass  = bandpass
-        if bandpass:
-            print("Bandpass is enabled")
 
     
     def __set_mask_fsky__(self,libdir):
-        maskobj = Mask(libdir,self.nside,'LAT')
+        maskobj = Mask(libdir,self.nside,'LAT',verbose=self.verbose)
         return maskobj.mask, maskobj.fsky
 
     def signalOnlyQU(self, idx: int, band: str) -> np.ndarray:

@@ -4,7 +4,7 @@ import healpy as hp
 import os
 import pickle as pl
 from solat_cb.spectra import Spectra
-from workspace.solat_cb.solat_cb.simulation.signal import CMB, LATsky
+from solat_cb.simulation import CMB, LATsky
 from solat_cb import mpi
 
 rad2arcmin = 180*60/np.pi

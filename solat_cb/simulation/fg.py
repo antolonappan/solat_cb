@@ -1,12 +1,30 @@
+# This file contains the implementation of the Foreground class for generating and handling dust and synchrotron foreground maps.
+
+# General imports
+import os
+import pysm3
+import numpy as np
+import healpy as hp
+import pickle as pl
+from typing import Tuple
+from pysm3 import units as u
+import matplotlib.pyplot as plt
+# Local imports
+from solat_cb import mpi
+from solat_cb.utils import Logger
+from solat_cb.data import BP_PROFILE
+
+
 class BandpassInt:
     def __init__(
         self,
+        libdir: str,
     ):
         """
         Initializes the BandpassInt class, loading bandpass profiles from a specified file.
         """
-        bp_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), "bp_profile.pkl")
-        self.bp = pl.load(open(bp_file, "rb"))
+        BP_PROFILE.directory = libdir
+        self.bp = BP_PROFILE.data
 
     def get_profile(self, band: str) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -49,6 +67,7 @@ class Foreground:
         dust_model: int,
         sync_model: int,
         bandpass: bool = False,
+        verbose: bool = True,
     ):
         """
         Initializes the Foreground class for generating and handling dust and synchrotron foreground maps.
@@ -60,13 +79,21 @@ class Foreground:
         sync_model (int): Model number for the synchrotron emission.
         bandpass (bool, optional): If True, bandpass integration is applied. Defaults to False.
         """
+        self.logger = Logger(self.__class__.__name__, verbose=verbose)
         self.libdir = os.path.join(libdir, "Foregrounds")
-        os.makedirs(self.libdir, exist_ok=True)
+        if mpi.rank == 0:
+            os.makedirs(self.libdir, exist_ok=True)
+        mpi.barrier()
         self.nside = nside
         self.dust_model = dust_model
         self.sync_model = sync_model
         self.bandpass = bandpass
-        self.bp_profile = BandpassInt() if bandpass else None
+        if bandpass:
+            self.bp_profile = BandpassInt(libdir)
+            self.logger.log("Bandpass integration is enabled", level="info")
+        else:
+            self.bp_profile = None
+            self.logger.log("Bandpass integration is disabled", level="info")
 
     def dustQU(self, band: str) -> np.ndarray:
         """
@@ -86,8 +113,11 @@ class Foreground:
         fname = os.path.join(self.libdir, name)
 
         if os.path.isfile(fname):
+            self.logger.log(f"Loading dust Q and U maps for band {band}", level="info")
             return hp.read_map(fname, field=[0, 1])
+        
         else:
+            self.logger.log(f"Generating dust Q and U maps for band {band}", level="info")
             sky = pysm3.Sky(
                 nside=self.nside, preset_strings=[f"d{int(self.dust_model)}"]
             )
@@ -127,8 +157,10 @@ class Foreground:
         fname = os.path.join(self.libdir, name)
 
         if os.path.isfile(fname):
+            self.logger.log(f"Loading synchrotron Q and U maps for band {band}", level="info")
             return hp.read_map(fname, field=[0, 1])
         else:
+            self.logger.log(f"Generating synchrotron Q and U maps for band {band}", level="info")
             sky = pysm3.Sky(
                 nside=self.nside, preset_strings=[f"s{int(self.sync_model)}"]
             )

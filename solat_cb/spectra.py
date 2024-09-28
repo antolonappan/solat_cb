@@ -4,8 +4,8 @@ import healpy as hp
 import pymaster as nmt
 import os
 from tqdm import tqdm
-from workspace.solat_cb.solat_cb.simulation.signal import LATsky
-from workspace.solat_cb.solat_cb.simulation.signal import Foreground
+from solat_cb.simulation import LATsky, Foreground,Mask
+from solat_cb.utils import Logger
 from solat_cb import mpi
 from typing import Dict, Optional, Any, Union, List, Tuple
 
@@ -15,9 +15,15 @@ from typing import Dict, Optional, Any, Union, List, Tuple
 # each helper should be sent to a different process to accelerate calculation
 
 class Spectra:
-    def __init__(self, lat_lib: LATsky, 
-                 aposcale: float = 2.0, template_bandpass: bool = False, pureB: bool = False,
-                 CO: bool = True, PS: bool = True):
+    def __init__(self, 
+                 lat_lib: LATsky, 
+                 aposcale: float = 2.0, 
+                 template_bandpass: bool = False, 
+                 pureB: bool = False,
+                 CO: bool = True, 
+                 PS: bool = True,
+                 verbose: bool = True
+                 ) -> None:
         """
         Initializes the Spectra class for computing and handling power spectra of observed CMB maps.
 
@@ -30,6 +36,7 @@ class Spectra:
         CO (bool, optional): Mask the brightest regions of CO emission. Defautls to True.
         PS (bool, optional): Mask the brightest polarised extragalactic point sources. Defaults to True.
         """
+        self.logger = Logger(self.__class__.__name__, verbose)
         self.lat   = lat_lib
         self.nside = self.lat.nside
         libdir     = self.lat.libdir
@@ -42,7 +49,7 @@ class Spectra:
         self.lmax     = 3 * self.lat.nside - 1
         
         self.temp_bp  = template_bandpass
-        self.fg       = Foreground(self.lat.foreground.libdir, self.nside, self.lat.dust_model, self.lat.sync_model, self.temp_bp)
+        self.fg       = Foreground(self.lat.foreground.libdir, self.nside, self.lat.dust_model, self.lat.sync_model, self.temp_bp, verbose=False)
         
         #TODO PDP: We might need some binning, let me test it
         self.binInfo  = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
@@ -77,31 +84,20 @@ class Spectra:
             f"mask_N{self.nside}_aposcale{str(self.aposcale).replace('.','p')}{'_CO' if self.CO else ''}{'_PS' if self.PS else ''}.fits",
         )
         if not os.path.isfile(fname):
-            bin_mask = np.copy(self.lat.mask)
+            mask_str = 'LAT'
             if self.CO:
-                print("Masking CO")
-                co_file = os.path.join(
-                            os.path.dirname(os.path.realpath(__file__)), "binary_CO_mask_N1024.fits"
-                            )
-                co_mask   = hp.read_map(co_file)
-                bin_mask *= ( hp.ud_grade(co_mask, self.nside) > 0).astype(int)
-                del co_mask
+                mask_str += 'xCO'
             if self.PS:
-                print("Masking PS")
-                ps_file = os.path.join(
-                            os.path.dirname(os.path.realpath(__file__)), "binary_comb_PS_mask_N1024.fits"
-                            )
-                ps_mask   = hp.read_map(ps_file)
-                bin_mask *= ( hp.ud_grade(ps_mask, self.nside) > 0).astype(int)
-                del ps_mask
-            print("Apodising mask")
-            mask = nmt.mask_apodization(bin_mask, self.aposcale, apotype="C2")
-            print(f"Apodised mask saved to {fname}")
-            hp.write_map(fname, mask, dtype=float)
+                mask_str += 'xPS'
+            maskobj = Mask(self.lat.basedir, self.nside, mask_str, self.aposcale)
+            mask = maskobj.mask
+
+            self.logger.log(f"Apodised mask saved to {fname}",'info')
+            hp.write_map(fname, mask, dtype=np.float32)
             return mask
         else:
-            print(f"Reading apodised mask from {fname}")
-            return hp.read_map(fname, dtype=float)
+            self.logger.log(f"Reading apodised mask from {fname}",'info')
+            return hp.read_map(fname)
         
         
     def get_coupling_matrix(self) -> None:
@@ -114,16 +110,16 @@ class Spectra:
             f"coupling_matrix_N{self.nside}_fsky{str(fsky).replace('.','p')}_aposcale{str(self.aposcale).replace('.','p')}{'_CO' if self.CO else ''}{'_PS' if self.PS else ''}{'_pureB' if self.pureB else ''}.fits",
         )
         if not os.path.isfile(fname):
-            print("Computing coupling Matrix")
+            self.logger.log("Computing coupling Matrix",'info')
             mask_f = nmt.NmtField(
                 self.mask, [self.mask, self.mask], lmax=self.lmax, purify_b=self.pureB
             )
             self.workspace.compute_coupling_matrix(mask_f, mask_f, self.binInfo)
             del mask_f
             self.workspace.write_to(fname)
-            print(f"Coupling Matrix saved to {fname}")
+            self.logger.log(f"Coupling Matrix saved to {fname}",'info')
         else:
-            print(f"Reading coupling matrix from {fname}")
+            self.logger.log(f"Reading coupling Matrix from {fname}",'info')
             self.workspace.read_from(fname)
 
     def compute_master(self, f_a: nmt.NmtField, f_b: nmt.NmtField) -> np.ndarray:
@@ -205,7 +201,7 @@ class Spectra:
             pwf    = np.array(hp.pixwin(self.nside, pol=True, lmax=self.lmax))
             hp.almxfl(E, bl[:,1]*pwf[1,:], inplace=True)
             hp.almxfl(B, bl[:,2]*pwf[1,:], inplace=True)
-            m      = hp.alm2map_spin([E, B], self.nside, 2, self.lmax)*self.lat.mask
+            m      = hp.alm2map_spin([E, B], self.nside, 2, self.lmax)*self.mask
             hp.write_map(fname, m, dtype=np.float64)
             return m[0], m[1]
 
