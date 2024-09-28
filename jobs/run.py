@@ -1,8 +1,8 @@
 import numpy as np
 import sys
 sys.path.append('/global/homes/l/lonappan/workspace/solat_cb')
-from lat_cb import mpi
-from lat_cb.mle import MLE
+from solat_cb import mpi
+from solat_cb.mle import MLE
 
 libdir ='/pscratch/sd/l/lonappan/SOLAT'
 nside = 512
