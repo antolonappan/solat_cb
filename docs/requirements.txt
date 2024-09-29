@@ -63,4 +63,5 @@ pysm3
 tqdm
 camb
 fitsio
+chealpix
 pymaster
