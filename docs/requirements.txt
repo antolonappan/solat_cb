@@ -62,4 +62,5 @@ healpy
 pysm3
 tqdm
 camb
+fitsio
 pymaster
