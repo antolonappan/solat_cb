@@ -136,7 +136,7 @@ class LATsky:
         Blm    = (E * np.sin(inrad(2 * alpha))) + (B * np.cos(inrad(2 * alpha)))
         del (E, B)
         bl     = hp.gauss_beam(inrad(fwhm / 60), lmax=self.cmb.lmax, pol=True)
-        pwf    = np.array(hp.pixwin(self.nside, pol=True, lmax=self.cmb.lmax))
+        pwf    = np.array(hp.pixwin(self.nside, pol=True))
         hp.almxfl(Elm, bl[:,1]*pwf[1,:], inplace=True)
         hp.almxfl(Blm, bl[:,2]*pwf[1,:], inplace=True)
         return hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.cmb.lmax)
@@ -177,7 +177,7 @@ class LATsky:
         sky   = np.array(signal) + noise
         for i in tqdm(range(len(bands)), desc="Saving Observed QUs", unit="band"):
             fname = self.obsQUfname(idx, bands[i])
-            hp.write_map(fname, sky[i]*self.mask, dtype=np.float64, overwrite=True)
+            hp.write_map(fname, sky[i]*self.mask, dtype=np.float64, overwrite=True) # type: ignore
 
     def obsQU(self, idx: int, band: str) -> np.ndarray:
         """
@@ -192,8 +192,8 @@ class LATsky:
         """
         fname = self.obsQUfname(idx, band)
         if os.path.isfile(fname):
-            return hp.read_map(fname, field=[0, 1])
+            return hp.read_map(fname, field=[0, 1]) # type: ignore
         else:
             self.saveObsQUs(idx)
-            return hp.read_map(fname, field=[0, 1])
+            return hp.read_map(fname, field=[0, 1]) # type: ignore
 

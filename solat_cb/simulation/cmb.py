@@ -24,12 +24,13 @@ class CMB:
         verbose: bool = True,
     ):
         self.logger = Logger(self.__class__.__name__, verbose=verbose)
+        self.basedir = libdir
         self.libdir = os.path.join(libdir, "CMB")
         os.makedirs(self.libdir, exist_ok=True)
         self.nside  = nside
         self.beta   = beta
         self.lmax   = 3 * nside - 1
-        SPECTRA.directory = self.libdir
+        SPECTRA.directory = self.basedir
         self.__spectra_file__ = SPECTRA.fname
         if os.path.isfile(self.__spectra_file__):
             self.logger.log("Loading CMB power spectra from file", level="info")
@@ -51,7 +52,7 @@ class CMB:
         """
         compute the CMB power spectra using CAMB.
         """
-        CAMB_INI.directory = self.libdir
+        CAMB_INI.directory = self.basedir
         params   = CAMB_INI.data
         results  = camb.get_results(params)
         powers   = {}
@@ -219,7 +220,7 @@ class CMB:
             f"cmbQU_N{self.nside}_{str(self.beta).replace('.','p')}_{idx:03d}.fits",
         )
         if os.path.isfile(fname):
-            return hp.read_map(fname, field=[0, 1])  
+            return hp.read_map(fname, field=[0, 1])  # type: ignore
         else:
             spectra = self.get_cb_lensed_spectra(
                 beta=self.beta if self.beta is not None else 0.0,

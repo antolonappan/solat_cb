@@ -114,7 +114,7 @@ class Foreground:
 
         if os.path.isfile(fname):
             self.logger.log(f"Loading dust Q and U maps for band {band}", level="info")
-            return hp.read_map(fname, field=[0, 1])
+            return hp.read_map(fname, field=[0, 1]) # type: ignore
         
         else:
             self.logger.log(f"Generating dust Q and U maps for band {band}", level="info")
@@ -126,15 +126,15 @@ class Foreground:
                     nu, weights = self.bp_profile.get_profile(band)
                 else:
                     raise ValueError("Bandpass profile is not initialized.")
-                nu = nu * u.GHz
+                nu = nu * u.GHz # type: ignore
                 maps = sky.get_emission(nu, weights)
             else:
-                maps = sky.get_emission(int(band) * u.GHz)
+                maps = sky.get_emission(int(band) * u.GHz) # type: ignore
 
-            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz))
+            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz)) # type: ignore
 
             if mpi.rank == 0:
-                hp.write_map(fname, maps[1:], dtype=np.float64)
+                hp.write_map(fname, maps[1:], dtype=np.float64) # type: ignore
             mpi.barrier()
 
             return maps[1:].value
@@ -158,7 +158,7 @@ class Foreground:
 
         if os.path.isfile(fname):
             self.logger.log(f"Loading synchrotron Q and U maps for band {band}", level="info")
-            return hp.read_map(fname, field=[0, 1])
+            return hp.read_map(fname, field=[0, 1]) # type: ignore
         else:
             self.logger.log(f"Generating synchrotron Q and U maps for band {band}", level="info")
             sky = pysm3.Sky(
@@ -169,15 +169,15 @@ class Foreground:
                     nu, weights = self.bp_profile.get_profile(band)
                 else:
                     raise ValueError("Bandpass profile is not initialized.")
-                nu = nu * u.GHz
+                nu = nu * u.GHz # type: ignore
                 maps = sky.get_emission(nu, weights)
             else:
-                maps = sky.get_emission(int(band) * u.GHz)
+                maps = sky.get_emission(int(band) * u.GHz) # type: ignore
 
-            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz))
+            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz)) # type: ignore
 
             if mpi.rank == 0:
-                hp.write_map(fname, maps[1:], dtype=np.float64)
+                hp.write_map(fname, maps[1:], dtype=np.float64) # type: ignore
             mpi.barrier()
 
             return maps[1:].value
