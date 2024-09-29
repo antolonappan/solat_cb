@@ -1,5 +1,6 @@
-# This file contains the implementation of the Foreground class for generating and handling dust and synchrotron foreground maps.
-
+"""
+This file contains the implementation of the Foreground class for generating and handling dust and synchrotron foreground maps.
+"""
 # General imports
 import os
 import pysm3

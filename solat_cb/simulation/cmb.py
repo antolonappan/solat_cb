@@ -1,4 +1,6 @@
-# This file contains the class to handle the Cosmic Microwave Background (CMB) data and simulations.
+"""
+This file contains the class to handle the Cosmic Microwave Background (CMB) data and simulations.
+"""
 
 # General imports
 import os
@@ -18,8 +20,8 @@ class CMB:
         self,
         libdir: str,
         nside: int,
-        beta: Optional[float] = None,
-        Acb: Optional[float] = None,
+        beta: Optional[float]=None,
+        Acb: Optional[float]=None,
         model: str = "iso",
         verbose: bool = True,
     ):
@@ -220,7 +222,7 @@ class CMB:
             f"cmbQU_N{self.nside}_{str(self.beta).replace('.','p')}_{idx:03d}.fits",
         )
         if os.path.isfile(fname):
-            return hp.read_map(fname, field=[0, 1])  # type: ignore
+            return hp.read_map(fname, field=[0, 1])   # type: ignore
         else:
             spectra = self.get_cb_lensed_spectra(
                 beta=self.beta if self.beta is not None else 0.0,

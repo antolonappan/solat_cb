@@ -77,7 +77,13 @@ class Mask:
             mask = self.__mask_obj__(self.select)
             mask.directory = self.libdir
             final_mask = mask.data
-        return final_mask
+            if hp.get_nside(final_mask) != self.nside:
+                if hp.get_nside(final_mask) > self.nside:
+                    self.logger.log(f"Downgrading mask {self.select} resolution", level="info")
+                else:
+                    self.logger.log(f"Upgrading mask {self.select} resolution", level="info")
+                final_mask = hp.ud_grade(final_mask, self.nside)
+        return np.array(final_mask)
     
     def __load_mask__(self) -> np.ndarray:
         """
