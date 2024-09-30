@@ -17,7 +17,7 @@ def NoiseSpectra(sensitivity_mode, fsky, lmax, atm_noise, telescope):
     
     teles.get_noise_curves(fsky, lmax, 1, full_covar=True, deconv_beam=False)
     corr_pairs = [(0,1),(2,3),(4,5)]
-    ell, N_ell_LA_T_full,N_ell_LA_P_full = teles.get_noise_curves(fsky, lmax, 1, full_covar=True, deconv_beam=True)
+    ell, N_ell_LA_T_full,N_ell_LA_P_full = teles.get_noise_curves(fsky, lmax, 1, full_covar=True, deconv_beam=False)
     del N_ell_LA_T_full
     bands = teles.get_bands().astype(int)
     Nbands = len(bands)
