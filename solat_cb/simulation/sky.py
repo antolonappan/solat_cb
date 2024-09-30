@@ -70,7 +70,7 @@ class SkySimulation:
         self.fwhm = fwhm
         self.tube = tube
         self.mask, self.fsky = self.__set_mask_fsky__(libdir)
-        self.noise = Noise(nside, self.fsky, atm_noise, nsplits, verbose=self.verbose)
+        self.noise = Noise(nside, self.fsky, self.__class__.__name__[:3], atm_noise, nsplits, verbose=self.verbose)
         self.config = {}
         for split in range(nsplits):
             for band in range(len(self.freqs)):

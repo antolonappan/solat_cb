@@ -1,159 +1,49 @@
 import numpy as np
-import healpy as hp 
+import healpy as hp
 from typing import Dict, Optional, Any, Union, List, Tuple
+from so_models_v3 import SO_Noise_Calculator_Public_v3_1_1 as so_models
 
 from solat_cb import mpi
 from solat_cb.utils import Logger
 
-def SO_LAT_Nell_v3_0_0(
-    sensitivity_mode: int,
-    f_sky: float,
-    ell_max: int,
-    atm_noise: bool
-) -> Dict[str, np.ndarray]:
-    """
-    Calculate the noise power spectrum for the SO LAT experiment.
-    v3.0.0 model adapted from https://github.com/simonsobs/so_noise_models/blob/master/so_models_v3/SO_Noise_Calculator_Public_v3_0_0.py
-    Parameters:
-    sensitivity_mode (int): The sensitivity mode of the experiment.
-                            Should be either 1 or 2.
-    f_sky (float): The fraction of the sky observed by the experiment.
-                     Should be in the range (0, 1].
-    atm_noise (bool): Return white + 1/f noise if True or white noise only if alse
-    ell_max (int): The maximum multipole value for the noise power spectrum.
+#atm_noise or atm_corr, same for the noise map as well
 
-    Returns:
-    Dict[str, np.ndarray]: A dictionary containing the noise power spectrum for each frequency band.
-    """
-
-    assert sensitivity_mode == 1 or sensitivity_mode == 2
-    assert f_sky > 0.0 and f_sky <= 1.0
-    assert ell_max <= 2e4
-    NTubes_LF  = 1
-    NTubes_MF  = 4
-    NTubes_UHF = 2
-
-    S_LA_27  = np.array([1.0e9, 48.0, 35.0]) * np.sqrt(1.0 / NTubes_LF)
-    S_LA_39  = np.array([1.0e9, 24.0, 18.0]) * np.sqrt(1.0 / NTubes_LF)
-    S_LA_93  = np.array([1.0e9,  5.4,  3.9]) * np.sqrt(4.0 / NTubes_MF)
-    S_LA_145 = np.array([1.0e9,  6.7,  4.2]) * np.sqrt(4.0 / NTubes_MF)
-    S_LA_225 = np.array([1.0e9, 15.0, 10.0]) * np.sqrt(2.0 / NTubes_UHF)
-    S_LA_280 = np.array([1.0e9, 36.0, 25.0]) * np.sqrt(2.0 / NTubes_UHF)
-
-    f_knee_pol_LA_27  = 700.0
-    f_knee_pol_LA_39  = 700.0
-    f_knee_pol_LA_93  = 700.0
-    f_knee_pol_LA_145 = 700.0
-    f_knee_pol_LA_225 = 700.0
-    f_knee_pol_LA_280 = 700.0
-    alpha_pol = -1.4
-
-    ## calculate the survey area and time
-    survey_time = 5.0  # years
-    t = survey_time * 365.25 * 24.0 * 3600.0  ## convert years to seconds
-    t = t * 0.2  ## retention after observing efficiency and cuts
-    # PDP: I think we should remove this when providing a hitmap separately
-    t = t * 0.85  ## a kludge for the noise non-uniformity of the map edges
-    A_SR = 4.0 * np.pi * f_sky  ## sky areas in steradians
-
-    ## make the ell array for the output noise curves
-    ell = np.arange(2, ell_max, 1)
-
-    ###   CALCULATE N(ell) for Temperature
-    ## calculate the experimental weight
-    W_T_27  = S_LA_27[sensitivity_mode] / np.sqrt(t)
-    W_T_39  = S_LA_39[sensitivity_mode] / np.sqrt(t)
-    W_T_93  = S_LA_93[sensitivity_mode] / np.sqrt(t)
-    W_T_145 = S_LA_145[sensitivity_mode] / np.sqrt(t)
-    W_T_225 = S_LA_225[sensitivity_mode] / np.sqrt(t)
-    W_T_280 = S_LA_280[sensitivity_mode] / np.sqrt(t)
-
-    if not atm_noise:
-        ###   CALCULATE N(ell) for Polarization
-        NW_P_27   = (W_T_27  * np.sqrt(2))**2.* A_SR 
-        NW_P_39   = (W_T_39  * np.sqrt(2))**2.* A_SR 
-        NW_P_93   = (W_T_93  * np.sqrt(2))**2.* A_SR 
-        NW_P_145  = (W_T_145 * np.sqrt(2))**2.* A_SR 
-        NW_P_225  = (W_T_225 * np.sqrt(2))**2.* A_SR 
-        NW_P_280  = (W_T_280 * np.sqrt(2))**2.* A_SR 
-        
-        N_ell_P = {
-            "ell": ell,
-            "27": np.repeat(NW_P_27, len(ell)),
-            "39": np.repeat(NW_P_39, len(ell)),
-            "93": np.repeat(NW_P_93, len(ell)),
-            "145": np.repeat(NW_P_145, len(ell)),
-            "225": np.repeat(NW_P_225, len(ell)),
-            "280": np.repeat(NW_P_280, len(ell)),
-        }
-    else:
-        ###   CALCULATE N(ell) for Polarization
-        ## calculate the atmospheric contribution for P
-        AN_P_27  = (ell / f_knee_pol_LA_27) ** alpha_pol + 1.0
-        AN_P_39  = (ell / f_knee_pol_LA_39) ** alpha_pol + 1.0
-        AN_P_93  = (ell / f_knee_pol_LA_93) ** alpha_pol + 1.0
-        AN_P_145 = (ell / f_knee_pol_LA_145) ** alpha_pol + 1.0
-        AN_P_225 = (ell / f_knee_pol_LA_225) ** alpha_pol + 1.0
-        AN_P_280 = (ell / f_knee_pol_LA_280) ** alpha_pol + 1.0
+def NoiseSpectra(sensitivity_mode, fsky, lmax, atm_noise, telescope):
+    match telescope:
+        case "LAT":
+            teles = so_models.SOLatV3point1(sensitivity_mode, el=50)
+        case "SAT":
+            teles = so_models.SOSatV3point1(sensitivity_mode)
     
-        ## calculate N(ell)
-        N_ell_P_27  = ( W_T_27 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_27
-        N_ell_P_39  = ( W_T_39 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_39
-        N_ell_P_93  = ( W_T_93 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_93
-        N_ell_P_145 = (W_T_145 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_145
-        N_ell_P_225 = (W_T_225 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_225
-        N_ell_P_280 = (W_T_280 * np.sqrt(2)) ** 2.0 * A_SR * AN_P_280
-    
-        # include cross-correlations due to atmospheric noise
-        # use correlation coefficient of r=0.9 within each dichroic pair and 0 otherwise
-        r_atm = 0.9
-        # different approach than for T -- need to subtract off the white noise part to get the purely atmospheric part
-        # see Sec. 2.2 of the SO science goals paper
-        N_ell_P_27_atm = (
-            (W_T_27 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_27) ** alpha_pol
-        )
-        N_ell_P_39_atm = (
-            (W_T_39 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_39) ** alpha_pol
-        )
-        N_ell_P_93_atm = (
-            (W_T_93 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_93) ** alpha_pol
-        )
-        N_ell_P_145_atm = (
-            (W_T_145 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_145) ** alpha_pol
-        )
-        N_ell_P_225_atm = (
-            (W_T_225 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_225) ** alpha_pol
-        )
-        N_ell_P_280_atm = (
-            (W_T_280 * np.sqrt(2)) ** 2.0 * A_SR * (ell / f_knee_pol_LA_280) ** alpha_pol
-        )
-        N_ell_P_27x39   = r_atm * np.sqrt( N_ell_P_27_atm * N_ell_P_39_atm)
-        N_ell_P_93x145  = r_atm * np.sqrt( N_ell_P_93_atm * N_ell_P_145_atm)
-        N_ell_P_225x280 = r_atm * np.sqrt(N_ell_P_225_atm * N_ell_P_280_atm)
-    
-        ## make a dictionary of noise curves for P
-        N_ell_P = {
-            "ell": ell,
-            "27": N_ell_P_27,
-            "39": N_ell_P_39,
-            "27x39": N_ell_P_27x39,
-            "93": N_ell_P_93,
-            "145": N_ell_P_145,
-            "93x145": N_ell_P_93x145,
-            "225": N_ell_P_225,
-            "280": N_ell_P_280,
-            "225x280": N_ell_P_225x280,
-        }
-
-    return N_ell_P
-
+    teles.get_noise_curves(fsky, lmax, 1, full_covar=True, deconv_beam=False)
+    corr_pairs = [(0,1),(2,3),(4,5)]
+    ell, N_ell_LA_T_full,N_ell_LA_P_full = teles.get_noise_curves(fsky, lmax, 1, full_covar=True, deconv_beam=False)
+    del N_ell_LA_T_full
+    bands = teles.get_bands().astype(int)
+    Nbands = len(bands)
+    N_ell_LA_P  = N_ell_LA_P_full[range(Nbands),range(Nbands)] #type: ignore
+    N_ell_LA_Px = [N_ell_LA_P_full[i,j] for i,j in corr_pairs] #type: ignore
+    Nell_dict = {}
+    Nell_dict["ell"] = ell
+    for i in range(3):
+        for j in range(3):
+            if j < 2:
+                Nell_dict[f"{bands[i*2+j]}"] = N_ell_LA_P[i*2+j]
+            else:
+                if atm_noise:
+                    k = i*2+j
+                    Nell_dict[f"{bands[k-2]}x{bands[k-1]}"] = N_ell_LA_Px[i]
+                else:
+                    continue
+    return Nell_dict
 
 
 class Noise:
 
     def __init__(self, 
                  nside: int, 
-                 fsky: float, 
+                 fsky: float,
+                 telescope: str,
                  atm_noise: bool = False, 
                  nsplits: int = 2,
                  verbose: bool = True,
@@ -172,7 +62,7 @@ class Noise:
         self.sensitivity_mode = 2
         self.atm_noise        = atm_noise
         self.nsplits          = nsplits
-        self.Nell             = SO_LAT_Nell_v3_0_0(self.sensitivity_mode, fsky, self.lmax, self.atm_noise)
+        self.Nell             = NoiseSpectra(self.sensitivity_mode, fsky, self.lmax, self.atm_noise, telescope)
         self.logger           = Logger(self.__class__.__name__, verbose)
         if atm_noise:
             self.logger.log("Noise Model: White + 1/f noise v3.0.0")
