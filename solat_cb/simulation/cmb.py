@@ -38,8 +38,16 @@ class CMB:
             self.logger.log("Loading CMB power spectra from file", level="info")
             self.powers = pl.load(open(self.__spectra_file__, "rb"))
         else:
-            self.logger.log("Computing CMB power spectra", level="info")
-            self.powers = self.compute_powers()
+            self.powers = SPECTRA.data
+            lmax_infile = len(self.powers['cls']['lensed_scalar'][:, 0])
+            if lmax_infile < self.lmax:
+                self.logger.log("CMB power spectra file does not contain enough data", level="warning")
+                self.logger.log("Computing CMB power spectra", level="info")
+                self.powers = self.compute_powers()
+                #TODO: feed the lmax to the compute_powers method
+                self.logger.log("CMB power spectra computed doesn't guarantee the lmax", level="critical")
+            else:
+                self.logger.log("CMB power spectra file is up-to-date", level="info")
         self.Acb    = Acb
         assert model in ["iso", "aniso"], "model should be 'iso' or 'aniso'"
         self.model  = model

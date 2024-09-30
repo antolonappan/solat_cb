@@ -1179,7 +1179,7 @@ class MLE:
         try:
             input_cls = self.spec.get_spectra(idx, sync='As' in self.fit)
         except TypeError:
-            self.spec.compute(self.sim_idx, sync='As' in self.fit)
+            self.spec.compute(idx, sync='As' in self.fit)
             input_cls = self.spec.get_spectra(idx, sync='As' in self.fit)
         
         # format cls and calculate elements of covariance matrix
