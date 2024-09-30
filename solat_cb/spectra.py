@@ -8,7 +8,7 @@ from solat_cb.simulation import LATsky, Foreground,Mask
 from solat_cb.utils import Logger
 from solat_cb import mpi
 from typing import Dict, Optional, Any, Union, List, Tuple
-
+from concurrent.futures import ThreadPoolExecutor
 
 # PDP: eventually we might want to also mask Galactic dust
 #TODO PDP: cls are calculated in series not parallel
@@ -22,7 +22,9 @@ class Spectra:
                  pureB: bool = False,
                  CO: bool = True, 
                  PS: bool = True,
-                 verbose: bool = True
+                 verbose: bool = True,
+                 cache: bool = True,
+                 parallel: int = 0
                  ) -> None:
         """
         Initializes the Spectra class for computing and handling power spectra of observed CMB maps.
@@ -76,6 +78,18 @@ class Spectra:
 
         self.workspace = nmt.NmtWorkspace()
         self.get_coupling_matrix()
+        self.cache = cache
+        self.parallel = parallel
+        match self.parallel:
+            case 0:
+                msg = "No parallelization"
+            case 1:
+                msg = "Parallelized single loop"
+            case 2:
+                msg = "Parallelized double loop"
+            case _:
+                raise ValueError("Invalid parallelization option")
+        self.logger.log(msg,'info')
         
         
     def get_apodised_mask(self) -> np.ndarray:
@@ -98,8 +112,7 @@ class Spectra:
         else:
             self.logger.log(f"Reading apodised mask from {fname}",'info')
             return hp.read_map(fname)
-        
-        
+             
     def get_coupling_matrix(self) -> None:
         """
         Computes or loads the coupling matrix for power spectrum estimation.
@@ -223,7 +236,7 @@ class Spectra:
             maps[i] = self.__get_fg_QUmap__(nu, 'sync')
         self.sync_qu_maps = maps
 
-    def __obs_x_obs_helper__(self, ii: int, idx: int) -> np.ndarray:
+    def __obs_x_obs_helper_series__(self, ii: int, idx: int) -> np.ndarray:
         """
         Helper function:
         Computes or loads the observed x observed power spectra for a specific frequency band.
@@ -267,31 +280,115 @@ class Spectra:
                     cl[jj, ii, 2, 2:] = cl_ij[2, :]  # EjBi
 
                 del fp_j
-            np.save(fname, cl)
+            
+            if self.cache:
+                np.save(fname, cl)
             return cl
 
-    def obs_x_obs(self, idx: int, progress: bool = False) -> np.ndarray:
+    def __obs_x_obs_helper_parallel__(self, ii: int, idx: int) -> np.ndarray:
+        """
+        Helper function:
+        Computes or loads the observed x observed power spectra for a specific frequency band.
+
+        Parameters:
+        ii (int): Index for the current frequency band.
+        idx (int): Index for the realization of the CMB map.
+
+        Returns:
+        np.ndarray: Power spectra for the observed x observed fields.
+        """
+        fname = os.path.join(
+            self.oxo_dir,
+            f"obs_x_obs_{self.bands[ii]}{'_obsBP' if self.lat.bandpass else ''}_{idx:03d}.npy",
+        )
+        if os.path.isfile(fname):
+            return np.load(fname)
+        else:
+            cl = np.zeros(
+                (self.Nbands, self.Nbands, 3, self.Nell + 2), dtype=np.float64
+            )
+            
+            fp_i = nmt.NmtField(
+                self.mask, self.obs_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                masked_on_input=False
+            )
+            
+            def compute_for_band(jj):
+                fp_j = nmt.NmtField(
+                    self.mask, self.obs_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
+                )
+
+                cl_ij = self.compute_master(fp_i, fp_j)  # (EiEj, EiBj, BiEj, BiBj)
+
+                # Update the cl array in the appropriate positions
+                cl[ii, jj, 0, 2:] = cl_ij[0, :]  # EiEj
+                cl[ii, jj, 1, 2:] = cl_ij[3, :]  # BiBj
+                cl[ii, jj, 2, 2:] = cl_ij[1, :]  # EiBj
+
+                if ii != jj:
+                    cl[jj, ii, 0, 2:] = cl_ij[0, :]  # EjEi = EiEj
+                    cl[jj, ii, 1, 2:] = cl_ij[3, :]  # BjBi = BiBj
+                    cl[jj, ii, 2, 2:] = cl_ij[2, :]  # EjBi
+
+                del fp_j
+
+            # Use ThreadPoolExecutor to parallelize the loop
+            with ThreadPoolExecutor() as executor:
+                executor.map(compute_for_band, range(ii, self.Nbands, 1))
+            
+            if self.cache:
+                np.save(fname, cl)
+            return cl
+
+    def __obs_x_obs_helper__(self, ii: int, idx: int) -> np.ndarray:
+        if self.parallel == 2:
+            return self.__obs_x_obs_helper_parallel__(ii, idx)
+        else:
+            return self.__obs_x_obs_helper_series__(ii, idx)
+            
+    def obs_x_obs(self, idx: int, progress: bool = False,) -> np.ndarray:
         """
         Computes or loads the observed x observed power spectra for all frequency bands.
 
         Parameters:
         idx (int): Index for the realization of the CMB map.
         progress (bool, optional): If True, displays a progress bar. Defaults to False.
+        parallel (int, optional): If 0, runs serially; otherwise, runs with multithreading. Defaults to 1.
 
         Returns:
         np.ndarray: Combined power spectra for the observed x observed fields across all bands.
         """
         cl = np.zeros((self.Nbands, self.Nbands, 3, self.Nell + 2), dtype=np.float64)
-        for ii in tqdm(
-            range(self.Nbands),
-            desc="obs x obs spectra",
-            unit="band",
-            disable=not progress,
-        ):
-            cl += self.__obs_x_obs_helper__(ii, idx)
+        
+        def process_band(ii):
+            return self.__obs_x_obs_helper__(ii, idx)
+
+        if self.parallel == 0:
+            # Serial execution
+            for ii in tqdm(
+                range(self.Nbands),
+                desc="obs x obs spectra",
+                unit="band",
+                disable=not progress,
+            ):
+                cl += process_band(ii)
+        else:
+            # Parallel execution
+            if progress:
+                with ThreadPoolExecutor() as executor:
+                    for result in tqdm(executor.map(process_band, range(self.Nbands)),
+                                    total=self.Nbands,
+                                    desc="obs x obs spectra",
+                                    unit="band"):
+                        cl += result
+            else:
+                with ThreadPoolExecutor() as executor:
+                    for result in executor.map(process_band, range(self.Nbands)):
+                        cl += result
         return cl
 
-    def __fg_x_obs_helper__(self, ii: int, idx: int, fg: str) -> np.ndarray:
+    def __fg_x_obs_helper_series__(self, ii: int, idx: int, fg: str) -> np.ndarray:
         """
         Helper function:
         Computes or loads the dust x observed power spectra for a specific frequency band.
@@ -342,8 +439,80 @@ class Spectra:
                 cl[ii, jj, 3, 2:] = cl_ij[2, :]  # BiEj
 
                 del fp_j
-            np.save(fname, cl)
+            
+            if self.cache:
+                np.save(fname, cl)
             return cl
+
+    def __fg_x_obs_helper_parallel__(self, ii: int, idx: int, fg: str) -> np.ndarray:
+        """
+        Helper function:
+        Computes or loads the dust x observed power spectra for a specific frequency band.
+
+        Parameters:
+        ii (int): Index for the current frequency band.
+        idx (int): Index for the realization of the CMB map.
+        fg (str): Type of foregrounds, either 'dust' or 'sync'
+        
+        Returns:
+        np.ndarray: Power spectra for the dust x observed fields.
+        """
+        if fg not in ['dust', 'sync']:
+            raise ValueError('Unknown foreground')
+            
+        base_dir = self.dxo_dir if fg == 'dust' else self.sxo_dir
+
+        fname = os.path.join(
+            base_dir,
+            f"{fg}_x_obs_{self.freqs[ii]}{'_obsBP' if self.lat.bandpass else ''}{'_tempBP' if self.temp_bp else ''}_{idx:03d}.npy",
+        )
+        
+        if os.path.isfile(fname):
+            return np.load(fname)
+        else:
+            cl = np.zeros((self.Nfreq, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
+
+            # Choose the field based on the foreground type
+            fp_i = nmt.NmtField(
+                self.mask, 
+                self.dust_qu_maps[ii] if fg == 'dust' else self.sync_qu_maps[ii], 
+                lmax=self.lmax, 
+                purify_b=self.pureB,
+                masked_on_input=False
+            )
+
+            def compute_for_band(jj):
+                # Inner function to process each band in parallel
+                fp_j = nmt.NmtField(
+                    self.mask, self.obs_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
+                )
+
+                cl_ij = self.compute_master(fp_i, fp_j)  # (EiEj, EiBj, BiEj, BiBj)
+
+                # Update the cl array in the appropriate positions
+                cl[ii, jj, 0, 2:] = cl_ij[0, :]  # EiEj
+                cl[ii, jj, 1, 2:] = cl_ij[3, :]  # BiBj
+                cl[ii, jj, 2, 2:] = cl_ij[1, :]  # EiBj
+                cl[ii, jj, 3, 2:] = cl_ij[2, :]  # BiEj
+
+                del fp_j
+
+
+
+            # Use ThreadPoolExecutor to parallelize the inner loop
+            with ThreadPoolExecutor() as executor:
+                executor.map(compute_for_band, range(0, self.Nbands, 1))
+
+            if self.cache:
+                np.save(fname, cl)
+            return cl
+
+    def __fg_x_obs_helper__(self, ii: int, idx: int, fg: str) -> np.ndarray:
+        if self.parallel == 2:
+            return self.__fg_x_obs_helper_parallel__(ii, idx, fg)
+        else:
+            return self.__fg_x_obs_helper_series__(ii, idx, fg)
 
     def dust_x_obs(self, idx: int, progress: bool = False) -> np.ndarray:
         """
@@ -352,18 +521,40 @@ class Spectra:
         Parameters:
         idx (int): Index for the realization of the CMB map.
         progress (bool, optional): If True, displays a progress bar. Defaults to False.
+        parallel (int, optional): If 0, runs serially; otherwise, runs with multithreading. Defaults to 1.
 
         Returns:
         np.ndarray: Combined power spectra for the dust x observed fields across all bands.
         """
         cl = np.zeros((self.Nfreq, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
-        for ii in tqdm(
-            range(self.Nfreq),
-            desc="dust x obs spectra",
-            unit="band",
-            disable=not progress,
-        ):
-            cl += self.__fg_x_obs_helper__(ii, idx, 'dust')
+
+        def process_band(ii):
+            return self.__fg_x_obs_helper__(ii, idx, 'dust')
+
+        if self.parallel == 0:
+            # Serial execution
+            for ii in tqdm(
+                range(self.Nfreq),
+                desc="dust x obs spectra",
+                unit="band",
+                disable=not progress,
+            ):
+                cl += process_band(ii)
+        else:
+            # Parallel execution
+            
+            if progress:
+                with ThreadPoolExecutor() as executor:
+                    for result in tqdm(executor.map(process_band, range(self.Nfreq)),
+                                    total=self.Nfreq,
+                                    desc="dust x obs spectra",
+                                    unit="band"):
+                        cl += result
+            else:
+                with ThreadPoolExecutor() as executor:
+                    for result in executor.map(process_band, range(self.Nfreq)):
+                        cl += result
+        
         return cl
 
     def sync_x_obs(self, idx: int, progress: bool = False) -> np.ndarray:
@@ -373,21 +564,47 @@ class Spectra:
         Parameters:
         idx (int): Index for the realization of the CMB map.
         progress (bool, optional): If True, displays a progress bar. Defaults to False.
+        parallel (int, optional): Controls parallelization.
+                                0 = serial, 2 = multithreading.
+                                Defaults to using self.parallel.
 
         Returns:
         np.ndarray: Combined power spectra for the synchrotron x observed fields across all bands.
         """
         cl = np.zeros((self.Nfreq, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
-        for ii in tqdm(
-            range(self.Nfreq),
-            desc="sync x obs spectra",
-            unit="band",
-            disable=not progress,
-        ):
-            cl += self.__fg_x_obs_helper__(ii, idx, 'sync')
+
+        def process_band(ii):
+            return self.__fg_x_obs_helper__(ii, idx, 'sync')
+
+        if self.parallel == 0:
+            # Serial execution
+            for ii in tqdm(
+                range(self.Nfreq),
+                desc="sync x obs spectra",
+                unit="band",
+                disable=not progress,
+            ):
+                cl += process_band(ii)
+        else:
+            # Parallel execution using multithreading
+            
+            if progress:
+                with ThreadPoolExecutor() as executor:
+                    for result in tqdm(executor.map(process_band, range(self.Nfreq)),
+                                    total=self.Nfreq,
+                                    desc="sync x obs spectra",
+                                    unit="band"):
+                        cl += result
+            else:
+                with ThreadPoolExecutor() as executor:
+                    for result in executor.map(process_band, range(self.Nfreq)):
+                        cl += result
+
+
+
         return cl
 
-    def __fg_x_fg_helper__(self, ii: int, fg: str) -> np.ndarray:
+    def __fg_x_fg_helper_series__(self, ii: int, fg: str) -> np.ndarray:
         """
         Helper function:
         Computes or loads the synchrotron x synchrotron power spectra for a specific frequency band.
@@ -450,8 +667,86 @@ class Spectra:
                     cl[jj, ii, 2, 2:] = cl_ij[2, :]  # EjBi
 
                 del fp_j
-            np.save(fname, cl)
+            if self.cache:
+                np.save(fname, cl)
             return cl
+
+    def __fg_x_fg_helper_parallel__(self, ii: int, fg: str) -> np.ndarray:
+        """
+        Helper function:
+        Computes or loads the synchrotron x synchrotron power spectra for a specific frequency band.
+
+        Parameters:
+        ii (int): Index for the current frequency band.
+        fg (str): Type of foregrounds, either 'dust' or 'sync'
+
+        Returns:
+        np.ndarray: Power spectra for the synchrotron x synchrotron fields.
+        """
+        if fg not in ['dust', 'sync']:
+            raise ValueError('Unknown foreground')
+        
+        base_dir = self.dxd_dir if fg == 'dust' else self.sxs_dir
+        fname = os.path.join(
+            base_dir,
+            f"{fg}_x_{fg}_{self.freqs[ii]}{'_tempBP' if self.temp_bp else ''}.npy",
+        )
+        
+        if os.path.isfile(fname):
+            return np.load(fname)
+        else:
+            cl = np.zeros((self.Nfreq, self.Nfreq, 3, self.Nell + 2), dtype=np.float64)
+
+            if fg == 'dust':
+                fp_i = nmt.NmtField(
+                    self.mask, self.dust_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
+                )
+            elif fg == 'sync':
+                fp_i = nmt.NmtField(
+                    self.mask, self.sync_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
+                )
+
+            def process_jj(jj):
+                if fg == 'dust':
+                    fp_j = nmt.NmtField(
+                        self.mask, self.dust_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                        masked_on_input=False
+                    )
+                elif fg == 'sync':
+                    fp_j = nmt.NmtField(
+                        self.mask, self.sync_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                        masked_on_input=False
+                    )
+                
+                cl_ij = self.compute_master(fp_i, fp_j)
+                
+                # Update cl for the given indices
+                cl[ii, jj, 0, 2:] = cl_ij[0, :]  # EiEj
+                cl[ii, jj, 1, 2:] = cl_ij[3, :]  # BiBj
+                cl[ii, jj, 2, 2:] = cl_ij[1, :]  # EiBj
+
+                if ii != jj:
+                    cl[jj, ii, 0, 2:] = cl_ij[0, :]  # EjEi = EiEj
+                    cl[jj, ii, 1, 2:] = cl_ij[3, :]  # BjBi = BiBj
+                    cl[jj, ii, 2, 2:] = cl_ij[2, :]  # EjBi
+
+                del fp_j
+
+            # Parallelize the loop over jj using ThreadPoolExecutor
+            with ThreadPoolExecutor() as executor:
+                executor.map(process_jj, range(ii, self.Nfreq, 1))
+            
+            if self.cache:
+                np.save(fname, cl)
+            return cl
+    
+    def __fg_x_fg_helper__(self, ii: int, fg: str) -> np.ndarray:
+        if self.parallel == 2:
+            return self.__fg_x_fg_helper_parallel__(ii, fg)
+        else:
+            return self.__fg_x_fg_helper_series__(ii, fg)
 
     def sync_x_sync(self, progress: bool = False) -> np.ndarray:
         """
@@ -464,13 +759,35 @@ class Spectra:
         np.ndarray: Combined power spectra for the synchrotron x synchrotron fields across all bands.
         """
         cl = np.zeros((self.Nfreq, self.Nfreq, 3, self.Nell + 2), dtype=np.float64)
-        for ii in tqdm(
-            range(self.Nfreq),
-            desc="sync x sync spectra",
-            unit="band",
-            disable=not progress,
-        ):
-            cl += self.__fg_x_fg_helper__(ii, 'sync')
+
+        def process_band(ii):
+            return self.__fg_x_fg_helper__(ii, 'sync')
+
+        if self.parallel == 0:
+            # Serial execution
+            for ii in tqdm(
+                range(self.Nfreq),
+                desc="sync x sync spectra",
+                unit="band",
+                disable=not progress,
+            ):
+                cl += process_band(ii)
+        else:
+            # Parallel execution using multithreading
+
+            if progress:
+                with ThreadPoolExecutor() as executor:
+                    for result in tqdm(executor.map(process_band, range(self.Nfreq)),
+                                    total=self.Nfreq,
+                                    desc="sync x sync spectra",
+                                    unit="band"):
+                        cl += result
+            else:
+                with ThreadPoolExecutor() as executor:
+                    for result in executor.map(process_band, range(self.Nfreq)):
+                        cl += result
+
+
         return cl
 
     def dust_x_dust(self, progress: bool = False) -> np.ndarray:
@@ -484,16 +801,38 @@ class Spectra:
         np.ndarray: Combined power spectra for the dust x dust fields across all bands.
         """
         cl = np.zeros((self.Nfreq, self.Nfreq, 3, self.Nell + 2), dtype=np.float64)
-        for ii in tqdm(
-            range(self.Nfreq),
-            desc="dust x dust spectra",
-            unit="band",
-            disable=not progress,
-        ):
-            cl += self.__fg_x_fg_helper__(ii, 'dust')
+
+        def process_band(ii):
+            return self.__fg_x_fg_helper__(ii, 'dust')
+
+        if self.parallel == 0:
+            # Serial execution
+            for ii in tqdm(
+                range(self.Nfreq),
+                desc="dust x dust spectra",
+                unit="band",
+                disable=not progress,
+            ):
+                cl += process_band(ii)
+        else:
+            # Parallel execution using multithreading
+
+            if progress:
+                with ThreadPoolExecutor() as executor:
+                    for result in tqdm(executor.map(process_band, range(self.Nfreq)),
+                                    total=self.Nfreq,
+                                    desc="dust x dust spectra",
+                                    unit="band"):
+                        cl += result
+            else:
+                with ThreadPoolExecutor() as executor:
+                    for result in executor.map(process_band, range(self.Nfreq)):
+                        cl += result
+
+
         return cl
 
-    def __sync_x_dust_helper__(self, ii: int) -> np.ndarray:
+    def __sync_x_dust_helper_series__(self, ii: int) -> np.ndarray:
         """
         Helper function:
         Computes or loads the synchrotron x dust power spectra for a specific frequency band.
@@ -529,9 +868,65 @@ class Spectra:
                 cl[ii, jj, 3, 2:] = cl_ij[2, :]  # BiEj
 
                 del fp_j
-            np.save(fname, cl)
+            
+            if self.cache:
+                np.save(fname, cl)
             return cl 
 
+    def __sync_x_dust_helper_parallel__(self, ii: int) -> np.ndarray:
+        """
+        Helper function:
+        Computes or loads the synchrotron x dust power spectra for a specific frequency band.
+
+        Parameters:
+        ii (int): Index for the current frequency band.
+
+        Returns:
+        np.ndarray: Power spectra for the synchrotron x dust fields.
+        """
+        fname = os.path.join(self.sxd_dir, f"sync_x_dust_{self.freqs[ii]}{'_tempBP' if self.temp_bp else ''}.npy")
+        
+        if os.path.isfile(fname):
+            return np.load(fname)
+        else:
+            cl = np.zeros((self.Nfreq, self.Nfreq, 4, self.Nell + 2), dtype=np.float64)
+            
+            fp_i = nmt.NmtField(
+                self.mask, self.sync_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
+                masked_on_input=False
+            )
+
+            def process_jj(jj):
+                fp_j = nmt.NmtField(
+                    self.mask, self.dust_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
+                    masked_on_input=False
+                )
+
+                cl_ij = self.compute_master(fp_i, fp_j)  # (EiEj, EiBj, BiEj, BiBj)
+
+                # Update cl for the given indices
+                cl[ii, jj, 0, 2:] = cl_ij[0, :]  # EiEj
+                cl[ii, jj, 1, 2:] = cl_ij[3, :]  # BiBj
+                cl[ii, jj, 2, 2:] = cl_ij[1, :]  # EiBj
+                cl[ii, jj, 3, 2:] = cl_ij[2, :]  # BiEj
+
+                del fp_j
+
+            # Parallelize the loop over jj using ThreadPoolExecutor
+            num_workers = os.cpu_count()  # Utilize all available CPU cores
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                executor.map(process_jj, range(self.Nfreq))
+            
+            if self.cache:
+                np.save(fname, cl)
+            return cl
+    
+    def __sync_x_dust_helper__(self, ii: int) -> np.ndarray:
+        if self.parallel == 2:
+            return self.__sync_x_dust_helper_parallel__(ii)
+        else:
+            return self.__sync_x_dust_helper_series__(ii)
+        
     def sync_x_dust(self, progress: bool = False) -> np.ndarray:
         """
         Computes or loads the synchrotron x dust power spectra for all frequency bands.
@@ -543,13 +938,35 @@ class Spectra:
         np.ndarray: Combined power spectra for the synchrotron x dust fields across all bands.
         """
         cl = np.zeros((self.Nfreq, self.Nfreq, 4, self.Nell + 2), dtype=np.float64)
-        for ii in tqdm(
-            range(self.Nfreq),
-            desc="sync x dust spectra",
-            unit="band",
-            disable=not progress,
-        ):
-            cl += self.__sync_x_dust_helper__(ii)
+
+        def process_band(ii):
+            return self.__sync_x_dust_helper__(ii)
+
+        if self.parallel == 0:
+            # Serial execution
+            for ii in tqdm(
+                range(self.Nfreq),
+                desc="sync x dust spectra",
+                unit="band",
+                disable=not progress,
+            ):
+                cl += process_band(ii)
+        else:
+            # Parallel execution using multithreading
+            if progress:
+                with ThreadPoolExecutor() as executor:
+                    for result in tqdm(executor.map(process_band, range(self.Nfreq)),
+                                    total=self.Nfreq,
+                                    desc="sync x dust spectra",
+                                    unit="band"):
+                        cl += result
+            else:
+                with ThreadPoolExecutor() as executor:
+                    for result in executor.map(process_band, range(self.Nfreq)):
+                        cl += result
+      
+
+
         return cl
 
     def clear_obs_qu_maps(self) -> None:
@@ -593,7 +1010,7 @@ class Spectra:
 
     def get_spectra(self, idx: int, 
                     sync: bool = False
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Dict:
         """
         Retrieves all relevant spectra for a given realization index.
 
