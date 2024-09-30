@@ -574,6 +574,8 @@ class MLE:
             self.MNi[mm, nn] = ii; self.MNj[mm, nn] = jj
             self.MNp[mm, nn] = pp; self.MNq[mm, nn] = qq
             
+            
+            
     def same_tube(self, band_1, band_2):
         return self.inst[band_1]["opt. tube"] == self.inst[band_2]["opt. tube"]
     
@@ -614,335 +616,93 @@ class MLE:
             alphas += res.ml[f"Iter {Niter}"]['beta']
         return alphas
 
-
 ############################################################################### 
 ### Combination of covariance matrix elements
- 
-    def build_cov(self, Niter, res): 
-        if self.fit=="alpha":
-            return self.__cov_alpha__(Niter, res)
-        elif self.fit=="Ad + alpha":
-            return self.__cov_Ad_alpha__(Niter, res) 
-        elif self.fit=="beta + alpha":
-            return self.__cov_beta_alpha__(Niter, res)
-        elif self.fit=="As + Ad + alpha":
-            return self.__cov_As_Ad_alpha__(Niter, res)
-        elif self.fit=="Ad + beta + alpha":
-            return self.__cov_Ad_beta_alpha__(Niter, res)
-        elif self.fit=="As + Ad + beta + alpha":
-            return self.__cov_As_Ad_beta_alpha__(Niter, res)
-        elif self.fit=="As + Asd + Ad + alpha":
-            return self.__cov_As_Asd_Ad_alpha__(Niter, res)
-        elif self.fit=="As + Asd + Ad + beta + alpha":
-            return self.__cov_As_Asd_Ad_beta_alpha__(Niter, res)
-      
-    def __cov_alpha__(self, Niter, res):     
+
+    def build_cov(self, Niter, res):
         # get parameters for this iteration
         ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)  
         # trigonometric factors rotating the spectra
-        c4ij = np.cos(4*ai)+np.cos(4*aj)
-        c4pq = np.cos(4*ap)+np.cos(4*aq)
-        Aij  = np.sin(4*aj)/c4ij; Apq = np.sin(4*aq)/c4pq
-        Bij  = np.sin(4*ai)/c4ij; Bpq = np.sin(4*ap)/c4pq
-        # covariance elements
+        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
+        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
+        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
+        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
+        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
+        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
+        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq  
+        
+        # observed * observed; remove all EB except the one in T0
         To   = np.copy(self.cov_terms['C_oxo'])
-        # observed * observed; remove all EB except the one in T0
-        return To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:]
-
-    def __cov_Ad_alpha__(self, Niter, res):
-        # get parameters for this iteration
-        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
-        # trigonometric factors rotating the spectra
-        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
-        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
-        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
-        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
-        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
-        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
-        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq      
-        # covariance elements
-        To   = np.copy(self.cov_terms['C_oxo'])
-        Td   = np.copy(self.cov_terms['C_dxd'])
-        Td_o = np.copy(self.cov_terms['C_dxo'])
-        # observed * observed; remove all EB except the one in T0
-        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
-        # dust * dust; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
-        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
+        cov  = To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:]
+        
+        if "beta" in self.fit:
+            beta = res.ml[f"Iter {Niter}"]["beta"]
+            Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
+            Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq))
+            Tcmb = np.copy(self.cov_terms['C_cmb'])
+            # cmb * cmb + cmb * observed
+            cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
+            
+        if "Ad" in self.fit:
+            Ad   = res.ml[f"Iter {Niter}"]["Ad"]
+            Td   = np.copy(self.cov_terms['C_dxd'])
+            Td_o = np.copy(self.cov_terms['C_dxo'])
+            # dust * dust; remove EB from T1, T2, T3
+            cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
+            # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+            cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
+        
+        if "As" in self.fit:
+            As   = res.ml[f"Iter {Niter}"]["As"]
+            Ts   = np.copy(self.cov_terms['C_sxs'])
+            Ts_d = np.copy(self.cov_terms['C_sxd'])
+            Ts_o = np.copy(self.cov_terms['C_sxo'])
+            # synch * synch; remove EB from T1, T2, T3
+            cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
+            # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+            cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
+            # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
+            cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
+            cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
+        
+        if "Asd" in self.fit:
+            Asd    = res.ml[f"Iter {Niter}"]["Asd"]
+            TSD    = np.copy(self.cov_terms['C_sdxsd'])
+            TDS    = np.copy(self.cov_terms['C_dsxds'])
+            TSD_DS = np.copy(self.cov_terms['C_sdxds'])
+            Ts_SD  = np.copy(self.cov_terms['C_sxsd'])
+            Ts_DS  = np.copy(self.cov_terms['C_sxds'])
+            Td_SD  = np.copy(self.cov_terms['C_dxsd'])
+            Td_DS  = np.copy(self.cov_terms['C_dxds'])
+            TSD_o  = np.copy(self.cov_terms['C_sdxo'])
+            TDS_o  = np.copy(self.cov_terms['C_dsxo'])
+            # covariance elements
+            # synch-dust * synch-dust; remove EB from T1, T2, T3
+            cov += + Dij*Dpq*Asd**2*TSD[0,:,:,:] + Eij*Epq*Asd**2*TSD[1,:,:,:] + Dij*Epq*Asd**2*TSD[2,:,:,:] + Eij*Dpq*Asd**2*TSD[3,:,:,:]
+            # dust-synch * dust-synch; remove EB from T1, T2, T3
+            cov += + Dij*Dpq*Asd**2*TDS[0,:,:,:] + Eij*Epq*Asd**2*TDS[1,:,:,:] + Dij*Epq*Asd**2*TDS[2,:,:,:] + Eij*Dpq*Asd**2*TDS[3,:,:,:]
+            ## synch-dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
+            cov += + Dij*Dpq*Asd**2*( TSD_DS[0,:,:,:] + TSD_DS[1,:,:,:] ) + Eij*Epq*Asd**2*( TSD_DS[2,:,:,:] + TSD_DS[3,:,:,:] )
+            cov += + Dij*Epq*Asd**2*( TSD_DS[4,:,:,:] + TSD_DS[7,:,:,:] ) + Dpq*Eij*Asd**2*( TSD_DS[5,:,:,:] + TSD_DS[6,:,:,:] )
+            # synch * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
+            cov += + Dij*Dpq*As*Asd*( Ts_SD[0,:,:,:] + Ts_SD[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_SD[6,:,:,:] + Ts_SD[7,:,:,:] )
+            cov += + Dij*Epq*As*Asd*( Ts_SD[2,:,:,:] + Ts_SD[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_SD[3,:,:,:] + Ts_SD[4,:,:,:] )
+            # synch * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
+            cov += + Dij*Dpq*As*Asd*( Ts_DS[0,:,:,:] + Ts_DS[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_DS[6,:,:,:] + Ts_DS[7,:,:,:] )
+            cov += + Dij*Epq*As*Asd*( Ts_DS[2,:,:,:] + Ts_DS[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_DS[3,:,:,:] + Ts_DS[4,:,:,:] )
+            # dust * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
+            cov += + Dij*Dpq*Ad*Asd*( Td_SD[0,:,:,:] + Td_SD[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_SD[6,:,:,:] + Td_SD[7,:,:,:] )
+            cov += + Dij*Epq*Ad*Asd*( Td_SD[2,:,:,:] + Td_SD[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_SD[3,:,:,:] + Td_SD[4,:,:,:] )
+            # dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
+            cov += + Dij*Dpq*Ad*Asd*( Td_DS[0,:,:,:] + Td_DS[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_DS[6,:,:,:] + Td_DS[7,:,:,:] )
+            cov += + Dij*Epq*Ad*Asd*( Td_DS[2,:,:,:] + Td_DS[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_DS[3,:,:,:] + Td_DS[4,:,:,:] )
+            # synch-dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+            cov += - Dij*Asd*TSD_o[0,:,:,:] - Dpq*Asd*TSD_o[1,:,:,:] - Eij*Asd*TSD_o[2,:,:,:] - Epq*Asd*TSD_o[3,:,:,:]
+            # dust-synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
+            cov += - Dij*Asd*TDS_o[0,:,:,:] - Dpq*Asd*TDS_o[1,:,:,:] - Eij*Asd*TDS_o[2,:,:,:] - Epq*Asd*TDS_o[3,:,:,:]
+            
         return cov
-    
-    def __cov_As_Ad_alpha__(self, Niter, res):
-        # get parameters for this iteration
-        As   = res.ml[f"Iter {Niter}"]["As"]
-        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
-        # trigonometric factors rotating the spectra
-        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
-        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
-        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
-        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
-        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
-        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
-        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq   
-        # covariance elements
-        To   = np.copy(self.cov_terms['C_oxo'])
-        Td   = np.copy(self.cov_terms['C_dxd'])
-        Ts   = np.copy(self.cov_terms['C_sxs'])
-        Ts_d = np.copy(self.cov_terms['C_sxd'])
-        Td_o = np.copy(self.cov_terms['C_dxo'])
-        Ts_o = np.copy(self.cov_terms['C_sxo'])
-        # observed * observed; remove all EB except the one in T0
-        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
-        # dust * dust; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
-        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
-        # synch * synch; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
-        # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
-        # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
-        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
-        return cov
-    
-    def __cov_As_Asd_Ad_alpha__(self, Niter, res):
-        # get parameters for this iteration
-        As   = res.ml[f"Iter {Niter}"]["As"]
-        Asd  = res.ml[f"Iter {Niter}"]["Asd"]
-        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
-        # trigonometric factors rotating the spectra
-        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
-        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
-        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
-        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
-        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
-        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
-        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq 
-        # covariance elements
-        To     = np.copy(self.cov_terms['C_oxo'])
-        Td     = np.copy(self.cov_terms['C_dxd'])
-        Ts     = np.copy(self.cov_terms['C_sxs'])
-        Ts_d   = np.copy(self.cov_terms['C_sxd'])
-        Td_o   = np.copy(self.cov_terms['C_dxo'])
-        Ts_o   = np.copy(self.cov_terms['C_sxo'])
-        TSD    = np.copy(self.cov_terms['C_sdxsd'])
-        TDS    = np.copy(self.cov_terms['C_dsxds'])
-        TSD_DS = np.copy(self.cov_terms['C_sdxds'])
-        Ts_SD  = np.copy(self.cov_terms['C_sxsd'])
-        Ts_DS  = np.copy(self.cov_terms['C_sxds'])
-        Td_SD  = np.copy(self.cov_terms['C_dxsd'])
-        Td_DS  = np.copy(self.cov_terms['C_dxds'])
-        TSD_o  = np.copy(self.cov_terms['C_sdxo'])
-        TDS_o  = np.copy(self.cov_terms['C_dsxo'])
-        # covariance elements
-        # observed * observed; remove all EB except the one in T0
-        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
-        # synch * synch; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
-        # dust * dust; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
-        # synch-dust * synch-dust; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Asd**2*TSD[0,:,:,:] + Eij*Epq*Asd**2*TSD[1,:,:,:] + Dij*Epq*Asd**2*TSD[2,:,:,:] + Eij*Dpq*Asd**2*TSD[3,:,:,:]
-        # dust-synch * dust-synch; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Asd**2*TDS[0,:,:,:] + Eij*Epq*Asd**2*TDS[1,:,:,:] + Dij*Epq*Asd**2*TDS[2,:,:,:] + Eij*Dpq*Asd**2*TDS[3,:,:,:]
-        # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
-        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
-        # synch-dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*Asd**2*( TSD_DS[0,:,:,:] + TSD_DS[1,:,:,:] ) + Eij*Epq*Asd**2*( TSD_DS[2,:,:,:] + TSD_DS[3,:,:,:] )
-        cov += + Dij*Epq*Asd**2*( TSD_DS[4,:,:,:] + TSD_DS[7,:,:,:] ) + Dpq*Eij*Asd**2*( TSD_DS[5,:,:,:] + TSD_DS[6,:,:,:] )
-        # synch * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*As*Asd*( Ts_SD[0,:,:,:] + Ts_SD[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_SD[6,:,:,:] + Ts_SD[7,:,:,:] )
-        cov += + Dij*Epq*As*Asd*( Ts_SD[2,:,:,:] + Ts_SD[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_SD[3,:,:,:] + Ts_SD[4,:,:,:] )
-        # synch * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*As*Asd*( Ts_DS[0,:,:,:] + Ts_DS[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_DS[6,:,:,:] + Ts_DS[7,:,:,:] )
-        cov += + Dij*Epq*As*Asd*( Ts_DS[2,:,:,:] + Ts_DS[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_DS[3,:,:,:] + Ts_DS[4,:,:,:] )
-        # dust * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*Ad*Asd*( Td_SD[0,:,:,:] + Td_SD[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_SD[6,:,:,:] + Td_SD[7,:,:,:] )
-        cov += + Dij*Epq*Ad*Asd*( Td_SD[2,:,:,:] + Td_SD[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_SD[3,:,:,:] + Td_SD[4,:,:,:] )
-        # dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*Ad*Asd*( Td_DS[0,:,:,:] + Td_DS[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_DS[6,:,:,:] + Td_DS[7,:,:,:] )
-        cov += + Dij*Epq*Ad*Asd*( Td_DS[2,:,:,:] + Td_DS[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_DS[3,:,:,:] + Td_DS[4,:,:,:] )
-        # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
-        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
-        # synch-dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Asd*TSD_o[0,:,:,:] - Dpq*Asd*TSD_o[1,:,:,:] - Eij*Asd*TSD_o[2,:,:,:] - Epq*Asd*TSD_o[3,:,:,:]
-        # dust-synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Asd*TDS_o[0,:,:,:] - Dpq*Asd*TDS_o[1,:,:,:] - Eij*Asd*TDS_o[2,:,:,:] - Epq*Asd*TDS_o[3,:,:,:]
-        return cov
-
-    def __cov_beta_alpha__(self, Niter, res):
-        # get parameters for this iteration
-        beta = res.ml[f"Iter {Niter}"]["beta"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
-        # trigonometric factors rotating the spectra
-        c4ij = np.cos(4*ai)+np.cos(4*aj)
-        c4pq = np.cos(4*ap)+np.cos(4*aq)
-        Aij  = np.sin(4*aj)/c4ij; Apq = np.sin(4*aq)/c4pq
-        Bij  = np.sin(4*ai)/c4ij; Bpq = np.sin(4*ap)/c4pq       
-        Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
-        Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq))        
-        # covariance elements
-        To   = np.copy(self.cov_terms['C_oxo'])
-        Tcmb = np.copy(self.cov_terms['C_cmb'])
-        # observed * observed; remove all EB except the one in T0
-        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
-        # cmb * cmb + cmb * observed
-        cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
-        return cov
-    
-    def __cov_Ad_beta_alpha__(self, Niter, res):
-        # get parameters for this iteration
-        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
-        beta = res.ml[f"Iter {Niter}"]["beta"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
-        # trigonometric factors rotating the spectra
-        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
-        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
-        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
-        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
-        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
-        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
-        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq
-        Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
-        Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq))        
-        # covariance elements
-        To   = np.copy(self.cov_terms['C_oxo'])
-        Tcmb = np.copy(self.cov_terms['C_cmb'])
-        Td   = np.copy(self.cov_terms['C_dxd'])
-        Td_o = np.copy(self.cov_terms['C_dxo'])
-        # observed * observed; remove all EB except the one in T0
-        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
-        # cmb * cmb + cmb * observed
-        cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
-        # dust * dust; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
-        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
-        return cov
-    
-    def __cov_As_Ad_beta_alpha__(self, Niter, res):
-        As   = res.ml[f"Iter {Niter}"]["As"]
-        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
-        beta = res.ml[f"Iter {Niter}"]["beta"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
-        # trigonometric factors rotating the spectra
-        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
-        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
-        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
-        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
-        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
-        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
-        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq
-        Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
-        Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq))   
-        # covariance elements
-        To     = np.copy(self.cov_terms['C_oxo'])
-        Tcmb   = np.copy(self.cov_terms['C_cmb'])
-        Td     = np.copy(self.cov_terms['C_dxd'])
-        Ts     = np.copy(self.cov_terms['C_sxs'])
-        Ts_d   = np.copy(self.cov_terms['C_sxd'])
-        Td_o   = np.copy(self.cov_terms['C_dxo'])
-        Ts_o   = np.copy(self.cov_terms['C_sxo'])
-        # covariance elements
-        # observed * observed; remove all EB except the one in T0
-        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
-        # cmb * cmb + cmb * observed
-        cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
-        # synch * synch; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
-        # dust * dust; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
-        # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
-        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
-        # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
-        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
-        return cov
-
-    def __cov_As_Asd_Ad_beta_alpha__(self, Niter, res):
-        # get parameters for this iteration
-        As   = res.ml[f"Iter {Niter}"]["As"]
-        Asd  = res.ml[f"Iter {Niter}"]["Asd"]
-        Ad   = res.ml[f"Iter {Niter}"]["Ad"]
-        beta = res.ml[f"Iter {Niter}"]["beta"]
-        ai, aj, ap, aq = self.__get_alpha_blocks__(Niter, res)
-        # trigonometric factors rotating the spectra
-        cicj = np.cos(2*ai)*np.cos(2*aj); cpcq = np.cos(2*ap)*np.cos(2*aq)
-        sisj = np.sin(2*ai)*np.sin(2*aj); spsq = np.sin(2*ap)*np.sin(2*aq)
-        c4ij = np.cos(4*ai)+np.cos(4*aj); c4pq = np.cos(4*ap)+np.cos(4*aq)
-        Aij  = np.sin(4*aj)/c4ij;         Apq  = np.sin(4*aq)/c4pq
-        Bij  = np.sin(4*ai)/c4ij;         Bpq  = np.sin(4*ap)/c4pq   
-        Dij  = 2*cicj/c4ij      ;         Dpq  = 2*cpcq/c4pq
-        Eij  = 2*sisj/c4ij      ;         Epq  = 2*spsq/c4pq 
-        Cij  = np.sin(4*beta)/(2*np.cos(2*ai+2*aj))
-        Cpq  = np.sin(4*beta)/(2*np.cos(2*ap+2*aq)) 
-        # covariance elements
-        To     = np.copy(self.cov_terms['C_oxo'])
-        Tcmb   = np.copy(self.cov_terms['C_cmb'])
-        Td     = np.copy(self.cov_terms['C_dxd'])
-        Ts     = np.copy(self.cov_terms['C_sxs'])
-        Ts_d   = np.copy(self.cov_terms['C_sxd'])
-        Td_o   = np.copy(self.cov_terms['C_dxo'])
-        Ts_o   = np.copy(self.cov_terms['C_sxo'])
-        TSD    = np.copy(self.cov_terms['C_sdxsd'])
-        TDS    = np.copy(self.cov_terms['C_dsxds'])
-        TSD_DS = np.copy(self.cov_terms['C_sdxds'])
-        Ts_SD  = np.copy(self.cov_terms['C_sxsd'])
-        Ts_DS  = np.copy(self.cov_terms['C_sxds'])
-        Td_SD  = np.copy(self.cov_terms['C_dxsd'])
-        Td_DS  = np.copy(self.cov_terms['C_dxds'])
-        TSD_o  = np.copy(self.cov_terms['C_sdxo'])
-        TDS_o  = np.copy(self.cov_terms['C_dsxo'])
-        # covariance elements
-        # observed * observed; remove all EB except the one in T0
-        cov  =  To[0,:,:,:] + Apq*Aij*To[1,:,:,:] + Bpq*Bij*To[2,:,:,:] 
-        # cmb * cmb + cmb * observed
-        cov += - 2*Cij*Cpq*( Tcmb[0,:,:,:] + Tcmb[1,:,:,:] )
-        # synch * synch; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*As**2*Ts[0,:,:,:] + Eij*Epq*As**2*Ts[1,:,:,:] + Dij*Epq*As**2*Ts[2,:,:,:] + Eij*Dpq*As**2*Ts[3,:,:,:]
-        # dust * dust; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Ad**2*Td[0,:,:,:] + Eij*Epq*Ad**2*Td[1,:,:,:] + Dij*Epq*Ad**2*Td[2,:,:,:] + Eij*Dpq*Ad**2*Td[3,:,:,:]
-        # synch-dust * synch-dust; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Asd**2*TSD[0,:,:,:] + Eij*Epq*Asd**2*TSD[1,:,:,:] + Dij*Epq*Asd**2*TSD[2,:,:,:] + Eij*Dpq*Asd**2*TSD[3,:,:,:]
-        # dust-synch * dust-synch; remove EB from T1, T2, T3
-        cov += + Dij*Dpq*Asd**2*TDS[0,:,:,:] + Eij*Epq*Asd**2*TDS[1,:,:,:] + Dij*Epq*Asd**2*TDS[2,:,:,:] + Eij*Dpq*Asd**2*TDS[3,:,:,:]
-        # synch * dust; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*As*Ad*( Ts_d[0,:,:,:] + Ts_d[1,:,:,:] ) + Eij*Epq*As*Ad*( Ts_d[2,:,:,:] + Ts_d[3,:,:,:] ) 
-        cov += + Dij*Epq*As*Ad*( Ts_d[4,:,:,:] + Ts_d[7,:,:,:] ) + Dpq*Eij*As*Ad*( Ts_d[5,:,:,:] + Ts_d[6,:,:,:] )
-        # synch-dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*Asd**2*( TSD_DS[0,:,:,:] + TSD_DS[1,:,:,:] ) + Eij*Epq*Asd**2*( TSD_DS[2,:,:,:] + TSD_DS[3,:,:,:] )
-        cov += + Dij*Epq*Asd**2*( TSD_DS[4,:,:,:] + TSD_DS[7,:,:,:] ) + Dpq*Eij*Asd**2*( TSD_DS[5,:,:,:] + TSD_DS[6,:,:,:] )
-        # synch * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*As*Asd*( Ts_SD[0,:,:,:] + Ts_SD[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_SD[6,:,:,:] + Ts_SD[7,:,:,:] )
-        cov += + Dij*Epq*As*Asd*( Ts_SD[2,:,:,:] + Ts_SD[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_SD[3,:,:,:] + Ts_SD[4,:,:,:] )
-        # synch * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*As*Asd*( Ts_DS[0,:,:,:] + Ts_DS[1,:,:,:] ) + Eij*Epq*As*Asd*( Ts_DS[6,:,:,:] + Ts_DS[7,:,:,:] )
-        cov += + Dij*Epq*As*Asd*( Ts_DS[2,:,:,:] + Ts_DS[5,:,:,:] ) + Dpq*Eij*As*Asd*( Ts_DS[3,:,:,:] + Ts_DS[4,:,:,:] )
-        # dust * synch-dust; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*Ad*Asd*( Td_SD[0,:,:,:] + Td_SD[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_SD[6,:,:,:] + Td_SD[7,:,:,:] )
-        cov += + Dij*Epq*Ad*Asd*( Td_SD[2,:,:,:] + Td_SD[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_SD[3,:,:,:] + Td_SD[4,:,:,:] )
-        # dust * dust-synch; remove EB from T2, T3, T4, T5, T6, T7
-        cov += + Dij*Dpq*Ad*Asd*( Td_DS[0,:,:,:] + Td_DS[1,:,:,:] ) + Eij*Epq*Ad*Asd*( Td_DS[6,:,:,:] + Td_DS[7,:,:,:] )
-        cov += + Dij*Epq*Ad*Asd*( Td_DS[2,:,:,:] + Td_DS[5,:,:,:] ) + Dpq*Eij*Ad*Asd*( Td_DS[3,:,:,:] + Td_DS[4,:,:,:] )
-        # synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*As*Ts_o[0,:,:,:] - Dpq*As*Ts_o[1,:,:,:]  - Eij*As*Ts_o[2,:,:,:] - Epq*As*Ts_o[3,:,:,:]
-        # dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Ad*Td_o[0,:,:,:] - Dpq*Ad*Td_o[1,:,:,:] - Eij*Ad*Td_o[2,:,:,:] - Epq*Ad*Td_o[3,:,:,:]
-        # synch-dust * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Asd*TSD_o[0,:,:,:] - Dpq*Asd*TSD_o[1,:,:,:] - Eij*Asd*TSD_o[2,:,:,:] - Epq*Asd*TSD_o[3,:,:,:]
-        # dust-synch * observed; remove EB from all except T0 and T1 (only T0 T1 T6 T7 left)
-        cov += - Dij*Asd*TDS_o[0,:,:,:] - Dpq*Asd*TDS_o[1,:,:,:] - Eij*Asd*TDS_o[2,:,:,:] - Epq*Asd*TDS_o[3,:,:,:]
-        return cov
-    
+               
     
 ###############################################################################
 ### Calculation of covariance matrix elements
@@ -1232,435 +992,54 @@ class MLE:
 ############################################################################### 
 ### Format cls and calculate elements of covariance matrix
 
-#TODO write it in one function similar to LinearSystem to avoid unnecesary repetitions
     def process_cls(self, incls): 
-        if self.fit=="alpha":
-            return self.__process_cls_alpha__(incls)
-        elif self.fit=="Ad + alpha":
-            return self.__process_cls_Ad_alpha__(incls) 
-        elif self.fit=="beta + alpha":
-            return self.__process_cls_beta_alpha__(incls)
-        elif self.fit=="As + Ad + alpha":
-            return self.__process_cls_As_Ad_alpha__(incls)
-        elif self.fit=="Ad + beta + alpha":
-            return self.__process_cls_Ad_beta_alpha__(incls)
-        elif self.fit=="As + Ad + beta + alpha":
-            return self.__process_cls_As_Ad_beta_alpha__(incls)
-        elif self.fit=="As + Asd + Ad + alpha":
-            return self.__process_cls_As_Asd_Ad_alpha__(incls)
-        elif self.fit=="As + Asd + Ad + beta + alpha":
-            return self.__process_cls_As_Asd_Ad_beta_alpha__(incls)
-
-    def __process_cls_alpha__(self, incls):
         lmax   = self.spec.lmax
-        # for the fit
+        # common to all fits (basic alpha*alpha fit)
         EEo_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBo_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBo_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
-        # for the covariance 
+        BBo_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        EBo_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        # observed * observed covariance
         EiEj_o   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
         BiBj_o   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
         EiBj_o   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
         BiEj_o   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # format cls
-        for ii, band_i in enumerate(self.bands):
-            idx_i = self.inst[band_i]['cl idx']
-            for jj, band_j in enumerate(self.bands):
-                idx_j  = self.inst[band_j]['cl idx']
-                # for the fit
-                EEo_ij_b[ii,jj,:] = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BBo_ij_b[ii,jj,:] = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EBo_ij_b[ii,jj,:] = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-
-                # for the covariance
-                # observed * observed
-                EiEj_o[ii,jj,:] = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BiBj_o[ii,jj,:] = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EiBj_o[ii,jj,:] = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-                BiEj_o[ii,jj,:] = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
-
-        # bin only once at the end
-        self.bin_terms = {'EEo_ij_b':bin_spec_matrix(EEo_ij_b, self.bin_conf),
-                          'BBo_ij_b':bin_spec_matrix(BBo_ij_b, self.bin_conf),
-                          'EBo_ij_b':bin_spec_matrix(EBo_ij_b, self.bin_conf)}
-        self.cov_terms = {'C_oxo':self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o)}
-  
-        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
-
-    def __process_cls_Ad_alpha__(self, incls):
-        lmax   = self.spec.lmax
-        # for the fit
-        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # for the covariance 
-        # obs - obs
-        EiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust - dust
-        EiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
-        BiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust - obs
-        Eid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-
-        # format cls
-        for ii, band_i in enumerate(self.bands):
-            idx_i  = self.inst[band_i]['cl idx']
-            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
-            for jj, band_j in enumerate(self.bands):
-                idx_j  = self.inst[band_j]['cl idx']
-                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
-                # for the fit 
-                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
-                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
-                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
-                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                # for the covariance
-                # observed * observed
-                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
-                # dust * dust
-                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
-                # dust * obs
-                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
-                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
-                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
-                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
-                
-        # bin only once at the end
-        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
-                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
-                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
-                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf)}
-        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
-                          "C_cmb":self.C_cmb(),
-                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
-                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo)}
-  
-        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
-        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
-        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
-    
-    def __process_cls_As_Ad_alpha__(self, incls):
-        lmax   = self.spec.lmax
-        # for the fit
-        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # for the covariance 
-        # obs - obs
-        EiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust - dust
-        EiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
-        BiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust - obs
-        Eid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # sync - sync
-        EiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
-        BiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # sync - obs
-        Eis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # sync - dust
-        Eis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # format cls
-        for ii, band_i in enumerate(self.bands):
-            idx_i  = self.inst[band_i]['cl idx']
-            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
-            for jj, band_j in enumerate(self.bands):
-                idx_j  = self.inst[band_j]['cl idx']
-                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
-                # for the fit 
-                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
-                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
-                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
-                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                EBs_ij_b[ii,jj,:]   = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
-                # for the covariance
-                # observed * observed
-                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
-                # dust * dust
-                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
-                # dust * obs
-                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
-                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
-                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
-                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
-                # sync * sync
-                EiEj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_s[ii,jj,:]  = incls['sxs'][freq_j, freq_i, 2, :lmax+1]
-                # sync * obs
-                Eis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 0, :lmax+1]
-                Bis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 1, :lmax+1]
-                Eis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 2, :lmax+1]
-                Bis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 3, :lmax+1]      
-                # sync * dust
-                Eis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 0, :lmax+1]
-                Bis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 1, :lmax+1]
-                Eis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
-                Bis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 3, :lmax+1]
-                
-
-        # bin only once at the end
-        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
-                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
-                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
-                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
-                          "EBs_ij_b":bin_spec_matrix(EBs_ij_b, self.bin_conf)}
-        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
-                          "C_cmb":self.C_cmb(),
-                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
-                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
-                          "C_sxs":self.C_fgxfg(EiEj_s, BiBj_s, EiBj_s, BiEj_s),
-                          "C_sxo":self.C_fgxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo),
-                          "C_sxd":self.C_sxd(Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)}
-  
-        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
-        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
-        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
-        del EiEj_s, BiBj_s, EiBj_s, BiEj_s
-        del Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo    
-        del Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd
+        # only used in particular combinations 
+        if 'beta' in self.fit:
+            EEcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            BBcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+        if 'Ad' in self.fit:
+            EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            # dust - dust covariance
+            EiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            BiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            EiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+            BiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            # dust - obs covariance
+            Eid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            Bid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            Eid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            Bid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        if 'As' in self.fit:
+            EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            # sync - sync covariance
+            EiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            BiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            EiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
+            BiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            # sync - obs covariance
+            Eis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            Bis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            Eis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            Bis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            # sync - dust covariance
+            Eis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            Bis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            Eis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            Bis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+        if 'Asd' in self.fit:
+            EsBd_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
+            EdBs_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
  
-    def __process_cls_As_Asd_Ad_alpha__(self, incls):
-        lmax   = self.spec.lmax
-        # for the fit
-        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EsBd_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EdBs_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
-        # for the covariance 
-        # observed * observed
-        EiEj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust * dust
-        EiEj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # synch * synch
-        EiEj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # synch * dust
-        Eis_Ejd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Bjd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eis_Bjd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Ejd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust * observed
-        Eid_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eid_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # synch * observed
-        Eis_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eis_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # format cls
-        for ii, band_i in enumerate(self.bands):
-            idx_i  = self.inst[band_i]['cl idx']
-            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
-            for jj, band_j in enumerate(self.bands):
-                idx_j  = self.inst[band_j]['cl idx']
-                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
-                # for the fit
-                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
-                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
-                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
-                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                EBs_ij_b[ii,jj,:]   = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
-                EsBd_ij_b[ii,jj,:]  = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
-                EdBs_ij_b[ii,jj,:]  = incls['sxd'][freq_j, freq_i, 3, :lmax+1]
-                # for the covariance
-                # observed * observed
-                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
-                # dust * dust
-                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
-                # sync * sync
-                EiEj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_s[ii,jj,:]  = incls['sxs'][freq_j, freq_i, 2, :lmax+1]
-                # sync * dust
-                Eis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 0, :lmax+1]
-                Bis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 1, :lmax+1]
-                Eis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
-                Bis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 3, :lmax+1]
-                # dust * obs
-                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
-                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
-                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
-                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
-                # sync * obs
-                Eis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 0, :lmax+1]
-                Bis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 1, :lmax+1]
-                Eis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 2, :lmax+1]
-                Bis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 3, :lmax+1]    
-
-        # bin only once at the end
-        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
-                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
-                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
-                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
-                          "EBs_ij_b":bin_spec_matrix(EBs_ij_b, self.bin_conf),
-                          "EsBd_ij_b":bin_spec_matrix(EsBd_ij_b, self.bin_conf),
-                          "EdBs_ij_b":bin_spec_matrix(EdBs_ij_b, self.bin_conf),}
-        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
-                          "C_cmb":self.C_cmb(),
-                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
-                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
-                          "C_sxs":self.C_fgxfg(EiEj_s, BiBj_s, EiBj_s, BiEj_s),
-                          "C_sxo":self.C_fgxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo),
-                          "C_sxd":self.C_sxd(Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_sdxsd":self.C_sdxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s,
-                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_dsxds":self.C_dsxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
-                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_sdxo":self.C_sdxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
-                                               Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
-                          "C_dsxo":self.C_dsxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
-                                               Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
-                          "C_sdxds":self.C_sdxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
-                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_sxsd":self.C_sxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s, Eis_Ejd, 
-                                               Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_sxds":self.C_sxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
-                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_dxsd":self.C_dxsd(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_dxds":self.C_dxds(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)}
-        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
-        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
-        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
-        del EiEj_s, BiBj_s, EiBj_s, BiEj_s
-        del Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo    
-        del Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd
-
-    def __process_cls_beta_alpha__(self, incls):
-        lmax   = self.spec.lmax
-        # for the fit
-        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EEcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # for the covariance 
-        EiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # format cls
-        for ii, band_i in enumerate(self.bands):
-            idx_i  = self.inst[band_i]['cl idx']
-            fwhm_i = self.inst[band_i]['fwhm']
-            for jj, band_j in enumerate(self.bands):
-                idx_j  = self.inst[band_j]['cl idx']
-                fwhm_j = self.inst[band_j]['fwhm']
-                # for the fit
-                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-                EEcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("ee", fwhm_i, fwhm_j, lmax)
-                BBcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("bb", fwhm_i, fwhm_j, lmax)
-                # for the covariance
-                # observed * observed
-                EiEj_o[ii,jj,:] = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BiBj_o[ii,jj,:] = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EiBj_o[ii,jj,:] = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-                BiEj_o[ii,jj,:] = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
-
-        # bin only once at the end
-        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
-                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
-                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
-                          "EEcmb_ij_b":bin_spec_matrix(EEcmb_ij_b, self.bin_conf),
-                          "BBcmb_ij_b":bin_spec_matrix(BBcmb_ij_b, self.bin_conf)}
-        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
-                          "C_cmb":self.C_cmb()}
-  
-        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
-
-    def __process_cls_Ad_beta_alpha__(self, incls):
-        lmax   = self.spec.lmax
-        # for the fit
-        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EEcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # for the covariance 
-        # obs - obs
-        EiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust - dust
-        EiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
-        BiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust - obs
-        Eid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-
         # format cls
         for ii, band_i in enumerate(self.bands):
             idx_i  = self.inst[band_i]['cl idx']
@@ -1670,298 +1049,96 @@ class MLE:
                 idx_j  = self.inst[band_j]['cl idx']
                 freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
                 fwhm_j = self.inst[band_j]['fwhm']
-                # for the fit 
-                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
-                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
-                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
-                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                EEcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("ee", fwhm_i, fwhm_j, lmax)
-                BBcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("bb", fwhm_i, fwhm_j, lmax)
-                # for the covariance
-                # observed * observed
-                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
-                # dust * dust
-                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
-                # dust * obs
-                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
-                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
-                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
-                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
                 
-        # bin only once at the end
-        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
-                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
-                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
-                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
-                          "EEcmb_ij_b":bin_spec_matrix(EEcmb_ij_b, self.bin_conf),
-                          "BBcmb_ij_b":bin_spec_matrix(BBcmb_ij_b, self.bin_conf)}
-        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
-                          "C_cmb":self.C_cmb(),
-                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
-                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo)}
-  
-        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
-        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
-        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
-
-    def __process_cls_As_Ad_beta_alpha__(self, incls):
-        lmax   = self.spec.lmax
-        # for the fit
-        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EEcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # for the covariance 
-        # obs - obs
-        EiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_o     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust - dust
-        EiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
-        BiEj_d     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust - obs
-        Eid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eid_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # sync - sync
-        EiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
-        BiEj_s     = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # sync - obs
-        Eis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eis_Bjo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Ejo    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # sync - dust
-        Eis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eis_Bjd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Ejd    = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # format cls
-        for ii, band_i in enumerate(self.bands):
-            idx_i  = self.inst[band_i]['cl idx']
-            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
-            fwhm_i = self.inst[band_i]['fwhm']
-            for jj, band_j in enumerate(self.bands):
-                idx_j  = self.inst[band_j]['cl idx']
-                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
-                fwhm_j = self.inst[band_j]['fwhm']
-                # for the fit 
-                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
-                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
-                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
-                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                EBs_ij_b[ii,jj,:]   = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
-                EEcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("ee", fwhm_i, fwhm_j, lmax)
-                BBcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("bb", fwhm_i, fwhm_j, lmax)
-                # for the covariance
-                # observed * observed
-                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
-                # dust * dust
-                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
-                # dust * obs
-                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
-                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
-                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
-                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
-                # sync * sync
-                EiEj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_s[ii,jj,:]  = incls['sxs'][freq_j, freq_i, 2, :lmax+1]
-                # sync * obs
-                Eis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 0, :lmax+1]
-                Bis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 1, :lmax+1]
-                Eis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 2, :lmax+1]
-                Bis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 3, :lmax+1]      
-                # sync * dust
-                Eis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 0, :lmax+1]
-                Bis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 1, :lmax+1]
-                Eis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
-                Bis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 3, :lmax+1]
-                
+                # common to all fits (basic alpha*alpha fit)
+                EEo_ij_b[ii,jj,:] = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
+                BBo_ij_b[ii,jj,:] = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
+                EBo_ij_b[ii,jj,:] = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
+                # observed * observed covariance
+                EiEj_o[ii,jj,:]   = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
+                BiBj_o[ii,jj,:]   = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
+                EiBj_o[ii,jj,:]   = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
+                BiEj_o[ii,jj,:]   = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
+                # only used in particular combinations 
+                if 'beta' in self.fit:
+                    EEcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("ee", fwhm_i, fwhm_j, lmax)
+                    BBcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("bb", fwhm_i, fwhm_j, lmax)
+                if 'Ad' in self.fit:
+                    EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                    # dust * dust covariance
+                    EiEj_d[ii,jj,:]     = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
+                    BiBj_d[ii,jj,:]     = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
+                    EiBj_d[ii,jj,:]     = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
+                    BiEj_d[ii,jj,:]     = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
+                    # dust * obs covariance
+                    Eid_Ejo[ii,jj,:]    = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
+                    Bid_Bjo[ii,jj,:]    = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
+                    Eid_Bjo[ii,jj,:]    = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
+                    Bid_Ejo[ii,jj,:]    = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
+                if 'As' in self.fit:
+                    EBs_ij_b[ii,jj,:]   = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                    # sync * sync covariance
+                    EiEj_s[ii,jj,:]     = incls['sxs'][freq_i, freq_j, 0, :lmax+1]
+                    BiBj_s[ii,jj,:]     = incls['sxs'][freq_i, freq_j, 1, :lmax+1]
+                    EiBj_s[ii,jj,:]     = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
+                    BiEj_s[ii,jj,:]     = incls['sxs'][freq_j, freq_i, 2, :lmax+1]
+                    # sync * dust covariance
+                    Eis_Ejd[ii,jj,:]    = incls['sxd'][freq_i, freq_j, 0, :lmax+1]
+                    Bis_Bjd[ii,jj,:]    = incls['sxd'][freq_i, freq_j, 1, :lmax+1]
+                    Eis_Bjd[ii,jj,:]    = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
+                    Bis_Ejd[ii,jj,:]    = incls['sxd'][freq_i, freq_j, 3, :lmax+1]
+                    # sync * obs covariance
+                    Eis_Ejo[ii,jj,:]    = incls['sxo'][freq_i, idx_j, 0, :lmax+1]
+                    Bis_Bjo[ii,jj,:]    = incls['sxo'][freq_i, idx_j, 1, :lmax+1]
+                    Eis_Bjo[ii,jj,:]    = incls['sxo'][freq_i, idx_j, 2, :lmax+1]
+                    Bis_Ejo[ii,jj,:]    = incls['sxo'][freq_i, idx_j, 3, :lmax+1]
+                if 'Asd' in self.fit:
+                    EsBd_ij_b[ii,jj,:]  = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
+                    EdBs_ij_b[ii,jj,:]  = incls['sxd'][freq_j, freq_i, 3, :lmax+1]             
 
         # bin only once at the end
         self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
                           "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
-                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
-                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
-                          "EBs_ij_b":bin_spec_matrix(EBs_ij_b, self.bin_conf),
-                          "EEcmb_ij_b":bin_spec_matrix(EEcmb_ij_b, self.bin_conf),
-                          "BBcmb_ij_b":bin_spec_matrix(BBcmb_ij_b, self.bin_conf)}
-        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
-                          "C_cmb":self.C_cmb(),
-                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
-                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
-                          "C_sxs":self.C_fgxfg(EiEj_s, BiBj_s, EiBj_s, BiEj_s),
-                          "C_sxo":self.C_fgxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo),
-                          "C_sxd":self.C_sxd(Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)}
-  
-        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
-        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
-        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
-        del EiEj_s, BiBj_s, EiBj_s, BiEj_s
-        del Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo    
-        del Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd
-    
-    def __process_cls_As_Asd_Ad_beta_alpha__(self, incls):
-        lmax   = self.spec.lmax
-        # for the fit
-        EEo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBo_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBd_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EBs_ij_b   = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EsBd_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EdBs_ij_b  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EEcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BBcmb_ij_b = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64) 
-        # for the covariance 
-        # observed * observed
-        EiEj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_o  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust * dust
-        EiEj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_d  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # synch * synch
-        EiEj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiBj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        EiBj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        BiEj_s  = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # synch * dust
-        Eis_Ejd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Bjd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eis_Bjd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Ejd = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # dust * observed
-        Eid_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eid_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bid_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # synch * observed
-        Eis_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Eis_Bjo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        Bis_Ejo = np.zeros((self.Nbands, self.Nbands, lmax+1), dtype=np.float64)
-        # format cls
-        for ii, band_i in enumerate(self.bands):
-            idx_i  = self.inst[band_i]['cl idx']
-            freq_i = np.where(self.spec.lat.freqs==band_i[:-2])[0][0]
-            fwhm_i = self.inst[band_i]['fwhm']
-            for jj, band_j in enumerate(self.bands):
-                idx_j  = self.inst[band_j]['cl idx']
-                freq_j = np.where(self.spec.lat.freqs==band_j[:-2])[0][0]
-                fwhm_j = self.inst[band_j]['fwhm']
-                # for the fit
-                EEo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  0, :lmax+1]
-                BBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  1, :lmax+1]
-                EBo_ij_b[ii,jj,:]   = incls['oxo'][idx_i,  idx_j,  2, :lmax+1]
-                EBd_ij_b[ii,jj,:]   = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                EBs_ij_b[ii,jj,:]   = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
-                EsBd_ij_b[ii,jj,:]  = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
-                EdBs_ij_b[ii,jj,:]  = incls['sxd'][freq_j, freq_i, 3, :lmax+1]
-                EEcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("ee", fwhm_i, fwhm_j, lmax)
-                BBcmb_ij_b[ii,jj,:] = self.convolve_gaussBeams_pwf("bb", fwhm_i, fwhm_j, lmax)
-                # for the covariance
-                # observed * observed
-                EiEj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 0, :lmax+1]
-                BiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 1, :lmax+1]
-                EiBj_o[ii,jj,:]  = incls['oxo'][idx_i, idx_j, 2, :lmax+1]
-                BiEj_o[ii,jj,:]  = incls['oxo'][idx_j, idx_i, 2, :lmax+1]
-                # dust * dust
-                EiEj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_d[ii,jj,:]  = incls['dxd'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_d[ii,jj,:]  = incls['dxd'][freq_j, freq_i, 2, :lmax+1]
-                # sync * sync
-                EiEj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 0, :lmax+1]
-                BiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 1, :lmax+1]
-                EiBj_s[ii,jj,:]  = incls['sxs'][freq_i, freq_j, 2, :lmax+1]
-                BiEj_s[ii,jj,:]  = incls['sxs'][freq_j, freq_i, 2, :lmax+1]
-                # sync * dust
-                Eis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 0, :lmax+1]
-                Bis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 1, :lmax+1]
-                Eis_Bjd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 2, :lmax+1]
-                Bis_Ejd[ii,jj,:] = incls['sxd'][freq_i, freq_j, 3, :lmax+1]
-                # dust * obs
-                Eid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 0, :lmax+1]
-                Bid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 1, :lmax+1]
-                Eid_Bjo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 2, :lmax+1]
-                Bid_Ejo[ii,jj,:] = incls['dxo'][freq_i, idx_j, 3, :lmax+1]
-                # sync * obs
-                Eis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 0, :lmax+1]
-                Bis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 1, :lmax+1]
-                Eis_Bjo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 2, :lmax+1]
-                Bis_Ejo[ii,jj,:] = incls['sxo'][freq_i, idx_j, 3, :lmax+1]    
-
-        # bin only once at the end
-        self.bin_terms = {"EEo_ij_b":bin_spec_matrix(EEo_ij_b, self.bin_conf),
-                          "BBo_ij_b":bin_spec_matrix(BBo_ij_b, self.bin_conf),
-                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf),
-                          "EBd_ij_b":bin_spec_matrix(EBd_ij_b, self.bin_conf),
-                          "EBs_ij_b":bin_spec_matrix(EBs_ij_b, self.bin_conf),
-                          "EsBd_ij_b":bin_spec_matrix(EsBd_ij_b, self.bin_conf),
-                          "EdBs_ij_b":bin_spec_matrix(EdBs_ij_b, self.bin_conf),
-                          "EEcmb_ij_b":bin_spec_matrix(EEcmb_ij_b, self.bin_conf),
-                          "BBcmb_ij_b":bin_spec_matrix(BBcmb_ij_b, self.bin_conf)}
-        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o),
-                          "C_cmb":self.C_cmb(),
-                          "C_dxd":self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d),
-                          "C_dxo":self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
-                          "C_sxs":self.C_fgxfg(EiEj_s, BiBj_s, EiBj_s, BiEj_s),
-                          "C_sxo":self.C_fgxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo),
-                          "C_sxd":self.C_sxd(Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_sdxsd":self.C_sdxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s,
-                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_dsxds":self.C_dsxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
-                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_sdxo":self.C_sdxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
-                                               Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
-                          "C_dsxo":self.C_dsxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
-                                               Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo),
-                          "C_sdxds":self.C_sdxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
-                                                 EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                                 Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_sxsd":self.C_sxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s, Eis_Ejd, 
-                                               Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_sxds":self.C_sxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
-                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_dxsd":self.C_dxsd(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd),
-                          "C_dxds":self.C_dxds(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
-                                               Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)}
-        del EiEj_o, BiBj_o, EiBj_o, BiEj_o # free memory 
-        del EiEj_d, BiBj_d, EiBj_d, BiEj_d
-        del Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo
-        del EiEj_s, BiBj_s, EiBj_s, BiEj_s
-        del Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo    
-        del Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd
+                          "EBo_ij_b":bin_spec_matrix(EBo_ij_b, self.bin_conf)}
+        self.cov_terms = {"C_oxo":self.C_oxo(EiEj_o, BiBj_o, EiBj_o, BiEj_o)}
+        # only used in particular combinations 
+        if 'beta' in self.fit:
+            self.bin_terms["EEcmb_ij_b"] = bin_spec_matrix(EEcmb_ij_b, self.bin_conf)
+            self.bin_terms["BBcmb_ij_b"] = bin_spec_matrix(BBcmb_ij_b, self.bin_conf)
+            self.cov_terms["C_cmb"]      = self.C_cmb()
+        if 'Ad' in self.fit:
+            self.bin_terms["EBd_ij_b"]   = bin_spec_matrix(EBd_ij_b, self.bin_conf)
+            self.cov_terms["C_dxd"]      = self.C_fgxfg(EiEj_d, BiBj_d, EiBj_d, BiEj_d)
+            self.cov_terms["C_dxo"]      = self.C_fgxo(Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo)
+        if 'As' in self.fit:
+            self.bin_terms["EBs_ij_b"]   = bin_spec_matrix(EBs_ij_b, self.bin_conf)
+            self.cov_terms["C_sxs"]      = self.C_fgxfg(EiEj_s, BiBj_s, EiBj_s, BiEj_s)
+            self.cov_terms["C_sxo"]      = self.C_fgxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo)
+            self.cov_terms["C_sxd"]      = self.C_sxd(Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)
+        if 'Asd' in self.fit:
+            self.bin_terms["EsBd_ij_b"]  = bin_spec_matrix(EsBd_ij_b, self.bin_conf)
+            self.bin_terms["EdBs_ij_b"]  = bin_spec_matrix(EdBs_ij_b, self.bin_conf)
+            self.cov_terms["C_sdxsd"]    = self.C_sdxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s,
+                                                        EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                        Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)
+            self.cov_terms["C_dsxds"]    = self.C_dsxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
+                                                        EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                        Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)
+            self.cov_terms["C_sdxo"]     = self.C_sdxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
+                                                       Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo)
+            self.cov_terms["C_dsxo"]     = self.C_dsxo(Eis_Ejo, Bis_Bjo, Eis_Bjo, Bis_Ejo, 
+                                                       Eid_Ejo, Bid_Bjo, Eid_Bjo, Bid_Ejo)
+            self.cov_terms["C_sdxds"]    = self.C_sdxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
+                                                        EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                        Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)
+            self.cov_terms["C_sxsd"]     = self.C_sxsd(EiEj_s, BiBj_s, EiBj_s, BiEj_s, Eis_Ejd, 
+                                                       Bis_Bjd, Eis_Bjd, Bis_Ejd)
+            self.cov_terms["C_sxds"]     = self.C_sxds(EiEj_s, BiBj_s, EiBj_s, BiEj_s, 
+                                                       Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)
+            self.cov_terms["C_dxsd"]     = self.C_dxsd(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                       Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)
+            self.cov_terms["C_dxds"]     = self.C_dxds(EiEj_d, BiBj_d, EiBj_d, BiEj_d, 
+                                                       Eis_Ejd, Bis_Bjd, Eis_Bjd, Bis_Ejd)
 
 
 ###############################################################################    
@@ -2536,7 +1713,6 @@ class MLE:
         return  params
     
     
-
 class S2N:
     
     def __init__(self, libdir, mode, nside, atm_noise, nsplits, dust, sync, 
@@ -2558,7 +1734,6 @@ class S2N:
         self.apo       = aposcale
         self.CO        = CO
         self.PS        = PS
-
         # create specific simulations for s/n calculation
         # fixed values for the calculation of the s/n
         self.beta            = 0.3 # deg
@@ -2578,7 +1753,7 @@ class S2N:
                                    alpha_per_split=alpha_per_split, 
                                    rm_same_tube=rm_same_tube, 
                                    bmax=bmax, bmin=bmin, binwidth=binwidth)
-        
+     
           
     def s2n_ell(self, iC, Niter, res):
         if self.fit=="alpha":
@@ -3009,7 +2184,22 @@ class S2N:
                 
         return s2n
 
-    def calculate(self):
+    def calculate(self, fit=None, bmin=None, bmax=None, binwidth=None,
+                  alpha_per_split=None, rm_same_tube=None):
+        
+        # reuse the object to calculate a new fit 
+        if fit!=None or bmin!=None or bmax!=None or binwidth!=None or alpha_per_split!=None or rm_same_tube!=None: 
+            if fit!=None:  self.fit = fit
+            if bmin!=None: self.bmin = bmin
+            if bmax!=None: self.bmax = bmax
+            nlb = binwidth if binwidth!=None else self.mle.nlb
+            if alpha_per_split!=None: self.alpha_per_split = alpha_per_split
+            if rm_same_tube!=None:    self.rm_same_tube    = rm_same_tube
+            self.mle = MLE(self.libdir, self.spec, self.fit, 
+                           alpha_per_split=self.alpha_per_split, 
+                           rm_same_tube=self.rm_same_tube, 
+                           bmax=self.bmax, bmin=self.bmin, binwidth=nlb)
+            
         niter = 0
         true_params = Result(self.spec, self.fit, self.idx, self.alpha_per_split, 
                              self.rm_same_tube, self.mle.nlb, self.bmin, self.bmax,
