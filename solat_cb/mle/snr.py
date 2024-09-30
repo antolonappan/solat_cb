@@ -11,7 +11,7 @@ class S2N:
     def __init__(self, libdir, mode, nside, atm_noise, nsplits, dust, sync, 
                  template_bandpass, fit, bmin, bmax, alpha_per_split, rm_same_tube,
                  bandpass=True, aposcale=2.0, CO=True, PS=True, pureB=True,
-                 window=5, binwidth=20):
+                 window=5, binwidth=20,parallel=0):
         
         self.libdir    = libdir+'/S2N'
         os.makedirs(self.libdir, exist_ok=True)
@@ -35,9 +35,11 @@ class S2N:
         self.sky             = LATsky(self.libdir, nside, 'iso', dust, sync, 
                                       self.alpha,self.beta, atm_noise=atm_noise,
                                       nsplits=nsplits, bandpass=self.bp)
-        self.sky.saveObsQUs(self.idx)
+
+        #self.sky.saveObsQUs(self.idx)
         self.spec            = Spectra(self.sky, template_bandpass=template_bandpass,
-                                       pureB=pureB, aposcale=aposcale, CO=CO, PS=PS)
+                                       pureB=pureB, aposcale=aposcale, CO=CO, PS=PS,
+                                       parallel=parallel)
         self.fit             = fit
         self.alpha_per_split = alpha_per_split
         self.rm_same_tube    = rm_same_tube
