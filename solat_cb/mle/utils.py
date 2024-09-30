@@ -100,49 +100,46 @@ class Result:
         self.std_fisher = {}
         self.cov_fisher = {"Iter 0":None }
         self.variables  = ''
-        match fit:
-            case "alpha":
-                ext_par = 0
-                # add them later once you know how many are there
-                self.ml["Iter 0"]         = {}
-                self.std_fisher["Iter 0"] = {}
-            case "Ad + alpha":
-                ext_par = 1
-                self.ml["Iter 0"]         = { 'Ad':1.0  } 
-                self.std_fisher["Iter 0"] = { 'Ad':None }
-                self.variables           += 'Ad'
-            case "beta + alpha":
-                ext_par = 1
-                self.ml["Iter 0"]         = { 'beta':beta_ini  }
-                self.std_fisher["Iter 0"] = { 'beta':None }
-                self.variables           += 'beta'
-            case "As + Ad + alpha":
-                ext_par = 2
-                self.ml["Iter 0"]         = { 'As':1.0,  'Ad':1.0  }
-                self.std_fisher["Iter 0"] = { 'As':None, 'Ad':None }
-                self.variables           += 'As, Ad'
-            case "Ad + beta + alpha":
-                ext_par = 2
-                self.ml["Iter 0"]         = { 'Ad':1.0,  'beta':beta_ini}
-                self.std_fisher["Iter 0"] = { 'Ad':None, 'beta':0.0 }
-                self.variables           += 'Ad, beta'
-            case "As + Ad + beta + alpha":
-                ext_par = 3
-                self.ml["Iter 0"]         = { 'As':1.0, 'Ad':1.0, 'beta':beta_ini}
-                self.std_fisher["Iter 0"] = { 'As':None,'Ad':None,'beta':None }
-                self.variables           += 'As, Ad, beta'
-            case "As + Asd + Ad + alpha":
-                ext_par = 3
-                self.ml["Iter 0"]         = { 'As':1.0,  'Asd':1.0,  'Ad':1.0 }
-                self.std_fisher["Iter 0"] = { 'As':None, 'Asd':None, 'Ad':None}
-                self.variables           += 'As, Asd, Ad' 
-            case "As + Asd + Ad + beta + alpha":
-                ext_par = 4
-                self.ml["Iter 0"]         = { 'As':1.0, 'Asd':1.0,  'Ad':1.0, 'beta':beta_ini}
-                self.std_fisher["Iter 0"] = { 'As':None,'Asd':None, 'Ad':None,'beta':None }
-                self.variables           += 'As, Asd, Ad, beta'
-            case _:
-                raise ValueError("Invalid fit type")
+        if fit=="alpha":
+            ext_par = 0
+            # add them later once you know how many are there
+            self.ml["Iter 0"]         = {}
+            self.std_fisher["Iter 0"] = {}
+        elif fit=="Ad + alpha":
+            ext_par = 1
+            self.ml["Iter 0"]         = { 'Ad':1.0  } 
+            self.std_fisher["Iter 0"] = { 'Ad':None }
+            self.variables           += 'Ad'
+        elif fit=="beta + alpha":
+            ext_par = 1
+            self.ml["Iter 0"]         = { 'beta':beta_ini  }
+            self.std_fisher["Iter 0"] = { 'beta':None }
+            self.variables           += 'beta'
+        elif fit=="As + Ad + alpha":
+            ext_par = 2
+            self.ml["Iter 0"]         = { 'As':1.0,  'Ad':1.0  }
+            self.std_fisher["Iter 0"] = { 'As':None, 'Ad':None }
+            self.variables           += 'As, Ad'
+        elif fit=="Ad + beta + alpha":
+            ext_par = 2
+            self.ml["Iter 0"]         = { 'Ad':1.0,  'beta':beta_ini}
+            self.std_fisher["Iter 0"] = { 'Ad':None, 'beta':0.0 }
+            self.variables           += 'Ad, beta'
+        elif fit=="As + Ad + beta + alpha":
+            ext_par = 3
+            self.ml["Iter 0"]         = { 'As':1.0, 'Ad':1.0, 'beta':beta_ini}
+            self.std_fisher["Iter 0"] = { 'As':None,'Ad':None,'beta':None }
+            self.variables           += 'As, Ad, beta'
+        elif fit=="As + Asd + Ad + alpha":
+            ext_par = 3
+            self.ml["Iter 0"]         = { 'As':1.0,  'Asd':1.0,  'Ad':1.0 }
+            self.std_fisher["Iter 0"] = { 'As':None, 'Asd':None, 'Ad':None}
+            self.variables           += 'As, Asd, Ad' 
+        elif fit=="As + Asd + Ad + beta + alpha":
+            ext_par = 4
+            self.ml["Iter 0"]         = { 'As':1.0, 'Asd':1.0,  'Ad':1.0, 'beta':beta_ini}
+            self.std_fisher["Iter 0"] = { 'As':None,'Asd':None, 'Ad':None,'beta':None }
+            self.variables           += 'As, Asd, Ad, beta'
             
         if alpha_per_split:
             self.Nalpha = spec.Nbands
