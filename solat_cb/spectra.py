@@ -47,8 +47,7 @@ class Spectra:
         comdir     = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + "_common")
         self.__set_dir__(libdiri, comdir)
         
-        # PDP: we won't need all these multipoles but I'll leave it like this for now
-        self.lmax     = 3 * self.lat.nside - 1
+        self.lmax     = 2000  #3 * self.lat.nside - 1
         
         self.temp_bp  = template_bandpass
         self.fg       = Foreground(self.lat.foreground.libdir, self.nside, self.lat.dust_model, self.lat.sync_model, self.temp_bp, verbose=False)

@@ -115,7 +115,7 @@ class MLE:
 
     def convolve_gaussBeams_pwf(self, mode, fwhm1, fwhm2, lmax):
         assert mode in ["ee", "bb"], "mode must be 'ee' or 'bb'"
-        (_, pwf) = hp.pixwin(self.nside, pol=True, lmax=lmax)
+        (_, pwf) = hp.pixwin(self.nside, pol=True, lmax=lmax) # type: ignore
         bl_1 = hp.gauss_beam(fwhm1/rad2arcmin, lmax=lmax, pol=True)
         bl_2 = hp.gauss_beam(fwhm2/rad2arcmin, lmax=lmax, pol=True)
         if mode=='ee':
@@ -251,7 +251,7 @@ class MLE:
             bl_BB[mm, nn, :] = b_i[:,2]*b_j[:,2]*b_p[:,2]*b_q[:,2] 
 
         ell      = np.arange(0, lmax+1, 1)
-        (_, pwf) = hp.pixwin(self.nside, pol=True, lmax=lmax)
+        (_, pwf) = hp.pixwin(self.nside, pol=True, lmax=lmax) #type : ignore
         ##################### cmb 
         Tcmb = np.zeros((2, self.Nbands*(self.Nbands-self.avoid), self.Nbands*(self.Nbands-self.avoid), lmax+1), dtype=np.float64)
         Tcmb[0,:,:,:] = pwf**4 * bl_EE * self.cmb_cls['ee'][:lmax+1]**2 /(2*ell+1)
@@ -1219,11 +1219,11 @@ class MLE:
             return res
    
     def result_name(self, idx):
-        path     = self.libdir
         fit_tag  = f"{self.fit.replace(' + ','_')}{'_sameAlphaPerSplit' if self.alpha_per_split else '_diffAlphaPerSplit'}{'_rmSameTube' if self.rm_same_tube else ''}{'_tempBP'if self.spec.temp_bp else ''}" 
         bin_tag  = f"Nb{self.nlb}_bmin{self.bmin}_bmax{self.bmax}"
         spec_tag = f"aposcale{str(self.spec.aposcale).replace('.','p')}{'_CO' if self.spec.CO else ''}{'_PS' if self.spec.PS else ''}{'_pureB' if self.spec.pureB else ''}_N{self.nside}"
-        return f"{path}/ml_params_{fit_tag}_{bin_tag}_{spec_tag}_{idx:03d}.pkl"
+        fname =  f"ml_params_{fit_tag}_{bin_tag}_{spec_tag}_{idx:03d}.pkl"
+        return os.path.join(self.libdir, fname)
        
     def estimate_angles(self, idx, overwrite=False, Niter=-1):
         file = self.result_name(idx)
@@ -1231,11 +1231,11 @@ class MLE:
             res = self.calculate(idx, return_result=True)
         else:
             res = pl.load(open(file, "rb"))
-        max_iter = len(res.ml.keys())
+        max_iter = len(res.ml.keys()) # type : ignore
         params   = {}
-        for var in res.variables.split(", "):
+        for var in res.variables.split(", "): # type : ignore
             if var not in ["As", "Asd", "Ad"]:
-                params[var] = np.rad2deg(res.ml[f"Iter {max_iter-1 if Niter==-1 else Niter}"][var])
+                params[var] = np.rad2deg(res.ml[f"Iter {max_iter-1 if Niter==-1 else Niter}"][var]) # type : ignore
             else:
-                params[var] = res.ml[f"Iter {max_iter-1 if Niter==-1 else Niter}"][var]
+                params[var] = res.ml[f"Iter {max_iter-1 if Niter==-1 else Niter}"][var] #type : ignore
         return  params

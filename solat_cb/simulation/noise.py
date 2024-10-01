@@ -25,16 +25,19 @@ def NoiseSpectra(sensitivity_mode, fsky, lmax, atm_noise, telescope):
     N_ell_LA_Px = [N_ell_LA_P_full[i,j] for i,j in corr_pairs] #type: ignore
     Nell_dict = {}
     Nell_dict["ell"] = ell
-    for i in range(3):
-        for j in range(3):
-            if j < 2:
-                Nell_dict[f"{bands[i*2+j]}"] = N_ell_LA_P[i*2+j]
-            else:
-                if atm_noise:
+    if atm_noise:
+        for i in range(3):
+            for j in range(3):
+                if j < 2:
+                    Nell_dict[f"{bands[i*2+j]}"] = N_ell_LA_P[i*2+j]
+                else:
                     k = i*2+j
                     Nell_dict[f"{bands[k-2]}x{bands[k-1]}"] = N_ell_LA_Px[i]
-                else:
-                    continue
+    else:
+        WN = np.radians(teles.get_white_noise(fsky)**.5*np.sqrt(2) / 60)**2
+        for i in range(Nbands):
+            Nell_dict[f"{bands[i]}"] = WN[i]*np.ones_like(ell)
+
     return Nell_dict
 
 
