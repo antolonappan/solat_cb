@@ -18,8 +18,8 @@ nsplits = 2
 bandpass = False
 fit = "As + Asd + Ad + beta + alpha"
 binwidth = 20
-bmin = 50
-bmax = 1500
+bmin = 60
+bmax = 2000
 
 lat = LATsky(libdir,nside,cb_method,dust,synch,alpha,beta,atm_noise=atm_noise,nsplits=nsplits,bandpass=bandpass)
 spec = Spectra(lat,cache=True,parallel=1)

@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --qos=debug
 #SBATCH --constraint=cpu
+#SBATCH --account=mp107e
 #SBATCH --nodes=4
 #SBATCH --ntasks=100
 #SBATCH --cpus-per-task=1
@@ -11,8 +12,6 @@
 #SBATCH --mail-type=begin,end,fail
 #SBATCH --mail-user=alonappan@ucsd.edu
 
-
-#source /global/homes/l/lonappan/.bashrc
 module load python
 conda activate cb
 cd /global/homes/l/lonappan/workspace/solat_cb/jobs

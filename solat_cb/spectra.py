@@ -387,7 +387,7 @@ class Spectra:
                         cl += result
         return cl
 
-    def __fg_x_obs_helper_series__(self, ii: int, idx: int, fg: str) -> np.ndarray:
+    def __fg_x_obs_helper_series__(self, ii: int, idx: int, fg: str, recache: bool = False) -> np.ndarray:
         """
         Helper function:
         Computes or loads the dust x observed power spectra for a specific frequency band.
@@ -410,8 +410,15 @@ class Spectra:
             f"{fg}_x_obs_{self.freqs[ii]}{'_obsBP' if self.lat.bandpass else ''}{'_tempBP' if self.temp_bp else ''}_{idx:03d}.npy",
         )
         
-        if os.path.isfile(fname): 
-            return np.load(fname)
+        if os.path.isfile(fname) and not recache:
+            try:
+                return np.load(fname)
+            except:
+                self.logger.log(f"Error loading {fname}",'error')
+                self.logger.log(f"Recomputing band:{ii},simulation:{idx}, FG: {fg}",'info')
+                self. __fg_x_obs_helper_series__(ii, idx, fg, recache=True)
+
+
         else:
             cl = np.zeros((self.Nfreq, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
             if fg=='dust':
@@ -443,7 +450,7 @@ class Spectra:
                 np.save(fname, cl)
             return cl
 
-    def __fg_x_obs_helper_parallel__(self, ii: int, idx: int, fg: str) -> np.ndarray:
+    def __fg_x_obs_helper_parallel__(self, ii: int, idx: int, fg: str, recache: bool = False) -> np.ndarray:
         """
         Helper function:
         Computes or loads the dust x observed power spectra for a specific frequency band.
@@ -466,8 +473,13 @@ class Spectra:
             f"{fg}_x_obs_{self.freqs[ii]}{'_obsBP' if self.lat.bandpass else ''}{'_tempBP' if self.temp_bp else ''}_{idx:03d}.npy",
         )
         
-        if os.path.isfile(fname):
-            return np.load(fname)
+        if os.path.isfile(fname) and not recache:
+            try:
+                return np.load(fname)
+            except:
+                self.logger.log(f"Error loading {fname}",'error')
+                self.logger.log(f"Recomputing band:{ii},simulation:{idx}, FG: {fg}",'info')
+                self. __fg_x_obs_helper_parallel__(ii, idx, fg, recache=True)
         else:
             cl = np.zeros((self.Nfreq, self.Nbands, 4, self.Nell + 2), dtype=np.float64)
 
