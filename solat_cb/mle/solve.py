@@ -3,10 +3,11 @@ import numpy as np
 import healpy as hp
 import os
 import pickle as pl
-from solat_cb.spectra import Spectra
-from solat_cb.simulation import CMB, LATsky
+from solat_cb.simulation import CMB
 from solat_cb.mle.utils import *
 from solat_cb.mle.ls import LinearSystem
+from solat_cb import mpi
+from solat_cb.utils import Logger
 
 rad2arcmin = 180*60/np.pi
      
@@ -18,12 +19,22 @@ class MLE:
     def __init__(self, libdir, spec_lib, fit,
                  alpha_per_split=False,
                  rm_same_tube=False,
-                 binwidth=20, bmin=51, bmax=1000):
+                 binwidth=20, bmin=51, bmax=1000,verbose=True):
+        self.logger = Logger(self.__class__.__name__, verbose)
         self.niter_max = 100
         self.tol       = 0.5 # arcmin  
         self.spec      = spec_lib
-        self.libdir    = self.spec.lat.libdir+'/mle'
-        os.makedirs(self.libdir, exist_ok=True)
+
+        if self.spec.lat.dust_model != self.spec.dust_model:
+            self.logger.log("Special Case Noted: FG model in LATsky and Spectra object are different", 'warning')
+            fld_ext = f"{self.spec.dust_model}{self.spec.sync_model}"
+        else:
+            fld_ext = ""
+
+        self.libdir    = os.path.join(self.spec.lat.libdir, 'mle'+fld_ext)
+        if mpi.rank == 0:
+            os.makedirs(self.libdir, exist_ok=True)
+        mpi.barrier()
         self.nside     = self.spec.nside
         self.cmb       = CMB(libdir, self.nside, beta=0, model='iso')
         self.cmb_cls   = self.cmb.get_lensed_spectra(dl=False, dtype='d')

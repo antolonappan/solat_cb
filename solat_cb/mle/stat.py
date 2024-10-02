@@ -83,7 +83,7 @@ class MultiStat:
         fiducial = data['fiducial']
         del data['fiducial']
 
-        _, axs = plt.subplots(len(fiducial), 1, figsize=(2 * len(data), 6), sharex=True)
+        _, axs = plt.subplots(len(fiducial), 1, figsize=(1 * len(data), 6), sharex=True)
 
         for idx, (key, fid_value) in enumerate(fiducial.items()):
             ax = axs[idx]

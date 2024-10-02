@@ -81,7 +81,8 @@ class Foreground:
         bandpass (bool, optional): If True, bandpass integration is applied. Defaults to False.
         """
         self.logger = Logger(self.__class__.__name__, verbose=verbose)
-        self.libdir = os.path.join(libdir, "Foregrounds")
+        self.basedir = libdir
+        self.libdir = os.path.join(libdir, f"Foregrounds{dust_model}{sync_model}")
         if mpi.rank == 0:
             os.makedirs(self.libdir, exist_ok=True)
         mpi.barrier()

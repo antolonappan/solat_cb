@@ -2,9 +2,9 @@
 #SBATCH --qos=debug
 #SBATCH --constraint=cpu
 #SBATCH --account=mp107e
-#SBATCH --nodes=4
+#SBATCH --nodes=8
 #SBATCH --ntasks=100
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=12
 #SBATCH -J SOLAT
 #SBATCH -o solat.out
 #SBATCH -e solat.err

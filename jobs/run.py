@@ -22,8 +22,9 @@ bmin = 60
 bmax = 2000
 
 lat = LATsky(libdir,nside,cb_method,dust,synch,alpha,beta,atm_noise=atm_noise,nsplits=nsplits,bandpass=bandpass)
-spec = Spectra(lat,cache=True,parallel=1)
-mle = MLE(libdir,spec,fit, alpha_per_split=False,rm_same_tube=True,binwidth=binwidth,bmin=bmin,bmax=bmax)
+#spec = Spectra(lat,cache=True,parallel=1)
+spec = Spectra(lat,cache=True,parallel=1,dust_model=9,sync_model=4)
+mle = MLE(libdir,spec,fit, alpha_per_split=False,rm_same_tube=False,binwidth=binwidth,bmin=bmin,bmax=bmax)
 jobs = np.arange(100)
 for i in jobs[mpi.rank::mpi.size]:
     di = mle.estimate_angles(i)

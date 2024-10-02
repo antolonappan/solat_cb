@@ -52,6 +52,7 @@ class SkySimulation:
         self.verbose = verbose
 
         fldname = "_atm_noise" if atm_noise else "_white_noise"
+        fldname += "_bandpass" if bandpass else ""
         fldname += f"_{nsplits}splits" + fldname_suffix
         self.basedir = libdir
         self.libdir = os.path.join(libdir, self.__class__.__name__[:3] + fldname)

@@ -11,8 +11,6 @@ from typing import Dict, Optional, Any, Union, List, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 # PDP: eventually we might want to also mask Galactic dust
-#TODO PDP: cls are calculated in series not parallel
-# each helper should be sent to a different process to accelerate calculation
 
 class Spectra:
     def __init__(self, 
@@ -44,27 +42,35 @@ class Spectra:
         self.lat   = lat_lib
         self.nside = self.lat.nside
         libdir     = self.lat.libdir
+
+        if dust_model != -1:
+            assert sync_model != -1, "Both dust and sync models must be specified"
+            self.dust_model = dust_model
+            self.sync_model = sync_model
+            self.logger.log(f"Evaluating special case: Simulation uses 'd{self.lat.dust_model}s{self.lat.sync_model}' FG model",'warning')
+            self.logger.log(f"The template foreground is set to d{dust_model}s{sync_model}",'warning')
+            fld_ext = f"_temp{dust_model}{sync_model}"
+        else:
+            self.dust_model = self.lat.dust_model
+            self.sync_model = self.lat.sync_model
+            fld_ext = ""
+        self.__fld_ext__ = fld_ext
+        
+
+
         fldname    = "_atm_noise" if self.lat.atm_noise else "_white_noise"
-        libdiri    = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + fldname)
-        comdir     = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + "_common")
+        libdiri    = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + fldname + fld_ext)
+        comdir     = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + "_common" + fld_ext)
         self.__set_dir__(libdiri, comdir)
         
         self.lmax     = 2000  #3 * self.lat.nside - 1
         
         self.temp_bp  = template_bandpass
 
-        if dust_model != -1:
-            assert sync_model != -1, "Both dust and sync models must be specified"
-            dust_model = dust_model
-            sync_model = sync_model
-            self.logger.log(f"Evaluating special case: Simulation uses 'd{self.lat.dust_model}s{self.lat.sync_model}' FG model",'critical')
-            self.logger.log(f"The template foreground is set to d{dust_model}s{sync_model}",'critical')
-        else:
-            dust_model = self.lat.dust_model
-            sync_model = self.lat.sync_model
 
 
-        self.fg       = Foreground(self.lat.foreground.libdir, self.nside, self.lat.dust_model, self.lat.sync_model, self.temp_bp, verbose=False)
+
+        self.fg       = Foreground(self.lat.foreground.basedir, self.nside, self.dust_model, self.sync_model, self.temp_bp, verbose=False)
         
         #TODO PDP: We might need some binning, let me test it
         self.binInfo  = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
@@ -261,8 +267,18 @@ class Spectra:
         Returns:
         np.ndarray: Power spectra for the observed x observed fields.
         """
+        if self.__fld_ext__ != "":
+            self.logger.log(f"Special case: Assumes that there exsist a previous run",'warning')
+            self.logger.log(f"Special case: the default obsxobs directory is {self.oxo_dir}",'warning')
+            oxo_dir = self.oxo_dir.replace(self.__fld_ext__,'')
+            self.logger.log(f"Special case: the obsxobs directory is set to {oxo_dir}",'warning')
+        else:
+            oxo_dir = self.oxo_dir
+
+
+
         fname = os.path.join(
-            self.oxo_dir,
+            oxo_dir,
             f"obs_x_obs_{self.bands[ii]}{'_obsBP' if self.lat.bandpass else ''}_{idx:03d}.npy",
         )
 
@@ -277,6 +293,7 @@ class Spectra:
             cl = np.zeros(
                 (self.Nbands, self.Nbands, 3, self.Nell + 2), dtype=np.float64
             )
+            assert self.obs_qu_maps is not None, "Observed Q and U maps not loaded"
             fp_i = nmt.NmtField(
                 self.mask, self.obs_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
                 masked_on_input=False
@@ -316,8 +333,16 @@ class Spectra:
         Returns:
         np.ndarray: Power spectra for the observed x observed fields.
         """
+        if self.__fld_ext__ != "":
+            self.logger.log(f"Special case: Assumes that there exsist a previous run",'warning')
+            self.logger.log(f"Special case: the default obsxobs directory is {self.oxo_dir}",'warning')
+            oxo_dir = self.oxo_dir.replace(self.__fld_ext__,'')
+            self.logger.log(f"Special case: the obsxobs directory is set to {oxo_dir}",'warning')
+        else:
+            oxo_dir = self.oxo_dir
+
         fname = os.path.join(
-            self.oxo_dir,
+            oxo_dir,
             f"obs_x_obs_{self.bands[ii]}{'_obsBP' if self.lat.bandpass else ''}_{idx:03d}.npy",
         )
         if os.path.isfile(fname) and not recache:
@@ -331,13 +356,14 @@ class Spectra:
             cl = np.zeros(
                 (self.Nbands, self.Nbands, 3, self.Nell + 2), dtype=np.float64
             )
-            
+            assert self.obs_qu_maps is not None, "Observed Q and U maps not loaded"
             fp_i = nmt.NmtField(
                 self.mask, self.obs_qu_maps[ii], lmax=self.lmax, purify_b=self.pureB,
                 masked_on_input=False
             )
             
             def compute_for_band(jj):
+                assert self.obs_qu_maps is not None, "Observed Q and U maps not loaded"
                 fp_j = nmt.NmtField(
                     self.mask, self.obs_qu_maps[jj], lmax=self.lmax, purify_b=self.pureB,
                     masked_on_input=False
