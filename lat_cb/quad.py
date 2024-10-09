@@ -6,6 +6,7 @@ from lat_cb.signal import LATsky
 from lat_cb import mpi
 import curvedsky as cs
 import pickle as pl
+import matplotlib.pyplot as plt
 
 
 #only for Carlos' EB studies
@@ -30,6 +31,7 @@ class QE:
         self.Tcmb = 2.726e6
         self.cl_len = (cmbEB.all_cls_th[:self.lmax+1]/self.Tcmb**2).T
         self.beam = hp.gauss_beam(np.deg2rad(2/60),lmax=self.lmax)
+        self.fsky = np.mean(self.__get_mask__())
 
     
     
@@ -46,6 +48,7 @@ class QE:
     
     def __get_mask__(self,version=0):
         mask = hp.read_map(os.path.join(self.path,self.mask_fname))
+        mask[mask > 0] = 1 #binary mask
         if version == 0:
             return mask
         elif version == 1:
@@ -84,7 +87,7 @@ class QE:
         fname = os.path.join(self.libdir,f"cinv_EB_{idx:04d}.pkl")
         if not os.path.isfile(fname):
             QU = self.QU(idx,version=1)
-            iterations = [1000]
+            iterations = [50]
             stat_file = 'stat.txt' 
             if test:
                 print(f"Cinv filtering is testing {idx}")
@@ -104,6 +107,25 @@ class QE:
             E,B = pl.load(open(fname,'rb'))
         
         return E,B
+    
+    def plot_cinv(self,idx):
+        """
+        plot the cinv filtered Cls for a given idx
+
+        Parameters
+        ----------
+        idx : int : index of the simulation
+        """
+        E,B = self.cinv_EB(idx)
+        ne,nb = self.get_noise_cl(version=0)
+        clb = cs.utils.alm2cl(self.lmax,B)
+        cle = cs.utils.alm2cl(self.lmax,E)
+        plt.figure(figsize=(4,4))
+        plt.loglog(clb,label='B')
+        plt.loglog(cle,label='E')
+        plt.loglog(1/(self.cl_len[2,:]),label='B theory')
+        plt.loglog(1/(self.cl_len[1,:]),label='E theory')
+        plt.legend()
         
         
 
