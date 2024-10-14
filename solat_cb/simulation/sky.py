@@ -7,6 +7,8 @@ from typing import Union, List, Optional
 
 from solat_cb.simulation import CMB, Foreground, Mask, Noise
 from solat_cb.utils import Logger, inrad
+from solat_cb.utils import cli
+from solat_cb.simulation import HILC
 
 
 class SkySimulation:
@@ -28,6 +30,7 @@ class SkySimulation:
         bandpass: bool = False,
         verbose: bool = True,
         fldname_suffix: str = "",
+        hilc_bins: int = 10,
     ):
         """
         Initializes the SkySimulation class for generating and handling sky simulations.
@@ -47,6 +50,7 @@ class SkySimulation:
         fwhm (np.ndarray, optional): Array of full-width half-maximum for the Gaussian beam.
         tube (np.ndarray, optional): Array of tube identifiers.
         fldname_suffix (str, optional): Suffix to append to the folder name. Defaults to "".
+        hilc_bins (int, optional): Number of bins for the HILC method. Defaults to 10.
         """
         self.logger = Logger(self.__class__.__name__, verbose)
         self.verbose = verbose
@@ -93,6 +97,7 @@ class SkySimulation:
         self.alpha = alpha
         self.atm_noise = atm_noise
         self.bandpass = bandpass
+        self.hilc_bins = hilc_bins
 
     def __set_mask_fsky__(self, libdir):
         maskobj = Mask(libdir, self.nside, self.__class__.__name__[:3], verbose=self.verbose)
@@ -106,28 +111,41 @@ class SkySimulation:
         return cmbQU + dustQU + syncQU
 
     def obsQUwAlpha(
-        self, idx: int, band: str, fwhm: float, alpha: float
+        self, idx: int, band: str, fwhm: float, alpha: float, apply_tranf: bool = True, return_alms: bool = False
     ) -> np.ndarray:
         signal = self.signalOnlyQU(idx, band)
         E, B = hp.map2alm_spin(signal, 2, lmax=self.cmb.lmax)
         Elm = (E * np.cos(inrad(2 * alpha))) - (B * np.sin(inrad(2 * alpha)))
         Blm = (E * np.sin(inrad(2 * alpha))) + (B * np.cos(inrad(2 * alpha)))
         del (E, B)
-        bl = hp.gauss_beam(inrad(fwhm / 60), lmax=self.cmb.lmax, pol=True)
-        pwf = np.array(hp.pixwin(self.nside, pol=True,))
-        hp.almxfl(Elm, bl[:, 1] * pwf[1, :], inplace=True)
-        hp.almxfl(Blm, bl[:, 2] * pwf[1, :], inplace=True)
-        return hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.cmb.lmax)
+        if apply_tranf:
+            bl = hp.gauss_beam(inrad(fwhm / 60), lmax=self.cmb.lmax, pol=True)
+            pwf = np.array(hp.pixwin(self.nside, pol=True,))
+            hp.almxfl(Elm, bl[:, 1] * pwf[1, :], inplace=True)
+            hp.almxfl(Blm, bl[:, 2] * pwf[1, :], inplace=True)
+        if return_alms:
+            return np.array([Elm, Blm])
+        else:
+            return hp.alm2map_spin([Elm, Blm], self.nside, 2, lmax=self.cmb.lmax)
 
     def obsQUfname(self, idx: int, band: str) -> str:
         alpha = self.config[band]["alpha"]
-        beta = self.cmb.beta
-        return os.path.join(
-            self.libdir,
-            f"obs/obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
-        )
+        if self.cb_method == 'iso':
+            beta = self.cmb.beta
+            return os.path.join(
+                self.libdir,
+                f"obs/obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
+            )
+        elif self.cb_method == 'aniso':
+            Acb = self.cmb.Acb
+            return os.path.join(
+                self.libdir,
+                f"obs/obsQU_N{self.nside}_A{str(Acb).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
+            )
+        
 
-    def saveObsQUs(self, idx: int) -> None:
+    def saveObsQUs(self, idx: int, apply_mask: bool = True) -> None:
+        mask = self.mask if apply_mask else np.ones_like(self.mask)
         bands = list(self.config.keys())
         signal = []
         for band in bands:
@@ -138,7 +156,7 @@ class SkySimulation:
         sky = np.array(signal) + noise
         for i in tqdm(range(len(bands)), desc="Saving Observed QUs", unit="band"):
             fname = self.obsQUfname(idx, bands[i])
-            hp.write_map(fname, sky[i] * self.mask, dtype=np.float64, overwrite=True) # type: ignore
+            hp.write_map(fname, sky[i] * mask, dtype=np.float64, overwrite=True) # type: ignore
 
     def obsQU(self, idx: int, band: str) -> np.ndarray:
         fname = self.obsQUfname(idx, band)
@@ -147,6 +165,50 @@ class SkySimulation:
         else:
             self.saveObsQUs(idx)
             return hp.read_map(fname, field=[0, 1]) # type: ignore
+        
+    
+    def HILC_obsEB(self, idx: int) -> np.ndarray:
+        fnameS = os.path.join(
+                self.libdir,
+                f"obs/hilcEB_N{self.nside}_A{str(self.Acb).replace('.','p')}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
+            )
+        fnameN = fnameS.replace('hilcEB','hilcNoise')
+        if os.path.isfile(fnameS) and os.path.isfile(fnameN):
+            return hp.read_alm(fnameS, hdu=[1, 2]), hp.read_cl(fnameN)
+        else:
+            noise = self.noise.noiseQU()
+            alms = []
+            nalms = []
+            bands = list(self.config.keys())
+            i = 0
+            for band in tqdm(bands, desc="Computing HILC Observed QUs", unit="band"):
+                fwhm = self.config[band]["fwhm"]
+                alpha = self.config[band]["alpha"]
+                elm,blm = self.obsQUwAlpha(idx, band, fwhm, alpha, apply_tranf=False, return_alms=True)
+                nelm,nblm = hp.map2alm_spin([noise[i][0],noise[i][1]], 2, lmax=self.cmb.lmax)  
+                bl = hp.gauss_beam(inrad(fwhm / 60), lmax=self.cmb.lmax, pol=True)
+                pwf = np.array(hp.pixwin(self.nside, pol=True,))
+                transfe = bl[:, 1] * pwf[1, :]
+                transfb = bl[:, 2] * pwf[1, :]
+                hp.almxfl(nelm, cli(transfe), inplace=True)
+                hp.almxfl(nblm, cli(transfb), inplace=True)
+                alms.append([elm+nelm, blm+nblm])
+                nalms.append([nelm, nblm])
+                i += 1
+            alms = np.array(alms)
+            nalms = np.array(nalms)
+            
+            hilc = HILC()
+            bins = np.arange(1000) * self.hilc_bins
+            cleaned,ilc_weight = hilc.harmonic_ilc_alm(alms,bins)
+            ilc_noise = hilc.apply_harmonic_W(ilc_weight,nalms)
+            cleaned, ilc_noise = cleaned[0], ilc_noise[0]
+            ilc_noise = [hp.alm2cl(ilc_noise[0]), hp.alm2cl(ilc_noise[1])]
+            hp.write_alm(fnameS, cleaned, overwrite=True)
+            hp.write_cl(fnameN, ilc_noise, overwrite=True)
+            return cleaned,ilc_noise
+            
+
 
 class LATsky(SkySimulation):
     freqs = np.array(["27", "39", "93", "145", "225", "280"])

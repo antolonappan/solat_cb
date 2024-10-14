@@ -51,6 +51,10 @@ class CMB:
         self.Acb    = Acb
         assert model in ["iso", "aniso"], "model should be 'iso' or 'aniso'"
         self.model  = model
+        if self.model == "aniso":
+            self.logger.log("Anisotropic cosmic birefringence model selected", level="info")
+        if self.model == "iso":
+            self.logger.log("Isotropic cosmic birefringence model selected", level="info")   
 
     def compute_powers(self) -> Dict[str, Any]:
         """
@@ -212,7 +216,7 @@ class CMB:
         elif self.model == "aniso":
             return self.get_aniso_cb_lensed_QU(idx)
         else:
-            raise NotImplementedError("Model not implemented yet")
+            raise NotImplementedError("Model not implemented yet, only 'iso' and 'aniso' are supported")
     
 
     def get_iso_cb_lensed_QU(self, idx: int) -> List[np.ndarray]:
@@ -282,9 +286,10 @@ class CMB:
             return hp.read_map(fname)
         else:
             cl_aa = self.cl_aa()
-            alm = hp.synalm(cl_aa, lmax=self.lmax)
+            cl_aa[0] = 0
+            alm = hp.synalm(cl_aa, lmax=self.lmax,new=True)
             alpha = hp.alm2map(alm, self.nside)
-            hp.write_map(fname, alpha, dtype=np.float32)
+            hp.write_map(fname, alpha, dtype=np.float64)
             return alpha # type: ignore
     
     def get_aniso_cb_lensed_QU(self, idx: int) -> List[np.ndarray]:
@@ -320,9 +325,7 @@ class CMB:
             rQ = Q * np.cos(2 * alpha) - U * np.sin(2 * alpha)
             rU = Q * np.sin(2 * alpha) + U * np.cos(2 * alpha)
             del (Q, U)
-            hp.write_map(fname, [rQ, rU], dtype=np.float32)
+            hp.write_map(fname, [rQ, rU], dtype=np.float64)
             return [rQ, rU]
         
-        
-
     
