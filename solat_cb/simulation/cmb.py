@@ -51,12 +51,6 @@ class CMB:
         self.Acb    = Acb
         assert model in ["iso", "aniso"], "model should be 'iso' or 'aniso'"
         self.model  = model
-        if model == "iso":
-            assert beta is not None, "beta should be provided for isotropic model"
-        if model == "aniso":
-            assert Acb is not None, "Acb should be provided for anisotropic model"
-        if self.model == "aniso":
-            raise NotImplementedError("Anisotropic model is not implemented yet")
 
     def compute_powers(self) -> Dict[str, Any]:
         """
@@ -156,9 +150,10 @@ class CMB:
             return powers
         else:
             raise ValueError("dtype should be 'd' or 'a'")
+    
 
     def get_cb_lensed_spectra(
-        self, beta: float = 0.3, dl: bool = True, dtype: str = "d", new: bool = False
+        self, beta: float = 0.0, dl: bool = True, dtype: str = "d", new: bool = False
     ) -> Union[Dict[str, np.ndarray], np.ndarray]:
         """
         Calculate the cosmic birefringence (CB) lensed spectra with a given rotation angle `beta`.
@@ -186,6 +181,7 @@ class CMB:
         Notes:
         The method applies a rotation by `alpha` degrees to the E and B mode spectra to account for cosmic birefringence.
         """
+
         powers = self.get_lensed_spectra(dl=dl) 
         pow = {}
         pow["tt"] = powers["tt"]
@@ -209,8 +205,17 @@ class CMB:
                 )
         else:
             raise ValueError("dtype should be 'd' or 'a'")
+    
+    def get_cb_lensed_QU(self,idx: int) -> List[np.ndarray]:
+        if self.model == "iso":
+            return self.get_iso_cb_lensed_QU(idx)
+        elif self.model == "aniso":
+            return self.get_aniso_cb_lensed_QU(idx)
+        else:
+            raise NotImplementedError("Model not implemented yet")
+    
 
-    def get_cb_lensed_QU(self, idx: int) -> List[np.ndarray]:
+    def get_iso_cb_lensed_QU(self, idx: int) -> List[np.ndarray]:
         """
         Generate or retrieve the Q and U Stokes parameters after applying cosmic birefringence.
 
@@ -246,3 +251,78 @@ class CMB:
             QU = hp.alm2map_spin([E, B], self.nside, 2, lmax=self.lmax)
             hp.write_map(fname, QU, dtype=np.float32)
             return QU
+        
+    def cl_aa(self):
+        """
+        Compute the Cl_AA power spectrum for the anisotropic model.
+        """
+        L = np.arange(self.lmax + 1)
+        assert self.Acb is not None, "Acb should be provided for anisotropic model"
+        return self.Acb * 2 * np.pi / ( L**2 + L + 1e-30)
+    
+    def alpha_map(self, idx: int) -> np.ndarray:
+        """
+        Generate a map of the rotation angle alpha for the anisotropic model.
+
+        Parameters:
+        idx (int): Index for the realization of the CMB map.
+
+        Returns:
+        np.ndarray: A map of the rotation angle alpha as a NumPy array.
+
+        Notes:
+        The method generates a map of the rotation angle alpha for the anisotropic model.
+        The map is generated as a random realization of the Cl_AA power spectrum.
+        """
+        fname = os.path.join(
+            self.libdir,
+            f"alpha_N{self.nside}_{str(self.Acb).replace('.','p')}_{idx:03d}.fits",
+        )
+        if os.path.isfile(fname):
+            return hp.read_map(fname)
+        else:
+            cl_aa = self.cl_aa()
+            alm = hp.synalm(cl_aa, lmax=self.lmax)
+            alpha = hp.alm2map(alm, self.nside)
+            hp.write_map(fname, alpha, dtype=np.float32)
+            return alpha # type: ignore
+    
+    def get_aniso_cb_lensed_QU(self, idx: int) -> List[np.ndarray]:
+        """
+        Generate the Q and U Stokes maps after applying cosmic birefringence for the anisotropic model.
+
+        Parameters:
+        idx (int): Index for the realization of the CMB map.
+
+        Returns:
+        List[np.ndarray]: A list containing the Q and U Stokes parameter maps as NumPy arrays.
+
+        Notes:
+        The method applies a rotation to the E and B mode spherical harmonics to simulate the effect of cosmic birefringence.
+        If the map for the given `idx` exists in the specified directory, it reads the map from the file.
+        Otherwise, it generates the Q and U maps, applies the birefringence, and saves the resulting map to a FITS file.
+        """
+        fname = os.path.join(
+            self.libdir,
+            f"cmbQU_N{self.nside}_{str(self.Acb).replace('.','p')}_{idx:03d}.fits",
+        )
+        if os.path.isfile(fname):
+            return hp.read_map(fname, field=[0, 1])
+        else:
+            spectra = self.get_lensed_spectra(dl=False)
+            T, Q, U = hp.synfast(
+                [spectra["tt"], spectra["ee"], spectra["bb"], spectra["te"]],
+                nside=self.nside,
+                new=True,
+            )
+            del T
+            alpha = self.alpha_map(idx)
+            rQ = Q * np.cos(2 * alpha) - U * np.sin(2 * alpha)
+            rU = Q * np.sin(2 * alpha) + U * np.cos(2 * alpha)
+            del (Q, U)
+            hp.write_map(fname, [rQ, rU], dtype=np.float32)
+            return [rQ, rU]
+        
+        
+
+    
