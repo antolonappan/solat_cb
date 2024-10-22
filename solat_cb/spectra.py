@@ -4,7 +4,7 @@ import healpy as hp
 import pymaster as nmt
 import os
 from tqdm import tqdm
-from solat_cb.simulation import LATsky, Foreground,Mask
+from solat_cb.simulation import LATsky, Foreground,Mask, SATsky
 from solat_cb.utils import Logger
 from solat_cb import mpi
 from typing import Dict, Optional, Any, Union, List, Tuple
@@ -14,17 +14,19 @@ from concurrent.futures import ThreadPoolExecutor
 
 class Spectra:
     def __init__(self, 
-                 lat_lib: LATsky, 
+                 lat_lib: LATsky | SATsky,
                  aposcale: float = 2.0, 
                  template_bandpass: bool = False, 
                  pureB: bool = False,
                  CO: bool = True, 
                  PS: bool = True,
+                 galcut: int | str | float = 0,
                  verbose: bool = True,
                  cache: bool = True,
                  parallel: int = 0,
                  dust_model: int = -1,
                  sync_model: int = -1,
+                 binwidth: int = 1,
                  ) -> None:
         """
         Initializes the Spectra class for computing and handling power spectra of observed CMB maps.
@@ -57,13 +59,13 @@ class Spectra:
         self.__fld_ext__ = fld_ext
         
 
-
+        deconv = self.lat.deconv_maps
         fldname    = "_atm_noise" if self.lat.atm_noise else "_white_noise"
-        libdiri    = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + fldname + fld_ext)
-        comdir     = os.path.join(libdir, f"spectra_{self.nside}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + "_common" + fld_ext)
+        libdiri    = os.path.join(libdir, f"spectra_{self.nside}{'_d' if deconv else ''}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + fldname + fld_ext)
+        comdir     = os.path.join(libdir, f"spectra_{self.nside}{'_d' if deconv else ''}_aposcale{str(aposcale).replace('.','p')}{'_pureB' if pureB else ''}" + "_common" + fld_ext)
         self.__set_dir__(libdiri, comdir)
         
-        self.lmax     = 2000  #3 * self.lat.nside - 1
+        self.lmax     = min(2000,3 * self.lat.nside - 1)
         
         self.temp_bp  = template_bandpass
 
@@ -72,13 +74,15 @@ class Spectra:
 
         self.fg       = Foreground(self.lat.foreground.basedir, self.nside, self.dust_model, self.sync_model, self.temp_bp, verbose=False)
         
-        #TODO PDP: We might need some binning, let me test it
-        self.binInfo  = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
+        
+        self.binwidth = binwidth
+        self.binInfo  = nmt.NmtBin.from_lmax_linear(self.lmax, binwidth)
         self.Nell     = self.binInfo.get_n_bands()
         self.pureB    = pureB
         self.aposcale = aposcale
         self.CO       = CO
         self.PS       = PS
+        self.galcut   = galcut
         self.mask     = self.get_apodised_mask()
         self.fsky     = np.mean(self.mask**2)**2/np.mean(self.mask**4)
         
@@ -114,15 +118,17 @@ class Spectra:
     def get_apodised_mask(self) -> np.ndarray:
         fname = os.path.join(
             self.wdir,
-            f"mask_N{self.nside}_aposcale{str(self.aposcale).replace('.','p')}{'_CO' if self.CO else ''}{'_PS' if self.PS else ''}.fits",
+            f"mask_N{self.nside}_aposcale{str(self.aposcale).replace('.','p')}{'_CO' if self.CO else ''}{'_PS' if self.PS else ''}{'_G'+str(self.galcut).replace('.','p') if self.galcut != 0 else ''}.fits",
         )
         if not os.path.isfile(fname):
-            mask_str = 'LAT'
+            mask_str = self.lat.__class__.__name__[:3]
             if self.CO:
                 mask_str += 'xCO'
             if self.PS:
                 mask_str += 'xPS'
-            maskobj = Mask(self.lat.basedir, self.nside, mask_str, self.aposcale)
+            if self.galcut != 0:
+                mask_str += 'xGAL'
+            maskobj = Mask(self.lat.basedir, self.nside, mask_str, self.aposcale,gal_cut=self.galcut)
             mask = maskobj.mask
 
             self.logger.log(f"Apodised mask saved to {fname}",'info')
@@ -139,7 +145,7 @@ class Spectra:
         fsky  = np.round(self.fsky, 2)
         fname = os.path.join(
             self.wdir,
-            f"coupling_matrix_N{self.nside}_fsky{str(fsky).replace('.','p')}_aposcale{str(self.aposcale).replace('.','p')}{'_CO' if self.CO else ''}{'_PS' if self.PS else ''}{'_pureB' if self.pureB else ''}.fits",
+            f"coupling_matrix_N{self.nside}_fsky{str(fsky).replace('.','p')}_aposcale{str(self.aposcale).replace('.','p')}_bw{self.binwidth}{'_CO' if self.CO else ''}{'_PS' if self.PS else ''}{'_pureB' if self.pureB else ''}{'_G'+str(self.galcut).replace('.','p') if self.galcut != 0 else ''}.fits",
         )
         if not os.path.isfile(fname):
             self.logger.log("Computing coupling Matrix",'info')

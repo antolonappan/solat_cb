@@ -7,7 +7,7 @@ import healpy as hp
 from pymaster import mask_apodization
 # Local imports
 from solat_cb import mpi
-from solat_cb.data import SAT_MASK, LAT_MASK, CO_MASK, PS_MASK
+from solat_cb.data import SAT_MASK, LAT_MASK, CO_MASK, PS_MASK, GAL_MASK
 from solat_cb.utils import Logger
 class Mask:
     def __init__(self, 
@@ -16,6 +16,7 @@ class Mask:
                  select: str, 
                  apo_scale: float = 0.0,
                  apo_method: str = 'C2',
+                 gal_cut: float | int | str = 0,
                  verbose: bool=True) -> None:
         """
         Initializes the Mask class for handling and generating sky masks.
@@ -26,10 +27,33 @@ class Mask:
         """
         self.logger = Logger(self.__class__.__name__,verbose)
         self.libdir = libdir
+        os.makedirs(self.libdir, exist_ok=True)
         self.nside = nside
         self.select = select
         self.apo_scale = apo_scale
         self.apo_method = apo_method
+
+        mask_mapper = {'40':0,'60':1,'70':2,'80':3,'90':4}
+
+        if 'GAL' in select:
+            if isinstance(gal_cut, float) and gal_cut < 1 :
+                self.logger.log(f"The given galactic cut value seems in fsky and it corresponds to {gal_cut*100}% of sky", level="info")
+                assert str(int(gal_cut*100)) in mask_mapper.keys(), f"Invalid gal_cut value: {gal_cut}, it should be in [0.4,0.6,0.7,0.8,0.9]"
+                gal_cut = mask_mapper[str(int(gal_cut*100))]
+            elif isinstance(gal_cut, int) and gal_cut > 1 :
+                self.logger.log(f"The given galactic cut value seems in percent of sky and it corresponds to {gal_cut}% of sky", level="info")
+                assert str(gal_cut) in mask_mapper.keys(), f"Invalid gal_cut value: {gal_cut}, it should be in [40,60,70,80,90]"
+                gal_cut = mask_mapper[str(gal_cut)]
+            elif isinstance(gal_cut, str) :
+                assert gal_cut in mask_mapper.keys(), f"Invalid gal_cut value: {gal_cut}, it should be in [40,60,70,80,90]"
+                gal_cut = mask_mapper[gal_cut]
+            else:
+                raise ValueError(f"Invalid gal_cut value: {gal_cut}, it should be in [0,40,60,70,80,90]")
+
+        
+
+
+        self.gal_cut = gal_cut
         self.mask = self.__load_mask__()
         self.fsky = self.__calc_fsky__()
 
@@ -43,6 +67,8 @@ class Mask:
                 mask = CO_MASK
             case "PS":
                 mask = PS_MASK
+            case "GAL":
+                mask = GAL_MASK
             case _:
                 raise ValueError(f"Invalid mask selection: {self.select}")
         return mask
@@ -62,6 +88,8 @@ class Mask:
             for mask in masks:
                 maskobj = self.__mask_obj__(mask)
                 maskobj.directory = self.libdir
+                if mask == 'GAL':
+                    maskobj.galcut = self.gal_cut
                 smask = maskobj.data
                 if hp.get_nside(smask) > self.nside:
                     self.logger.log(f"Downgrading mask {mask} resolution", level="info")

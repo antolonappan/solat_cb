@@ -7,7 +7,7 @@ from typing import Union, List, Optional
 
 from solat_cb.simulation import CMB, Foreground, Mask, Noise
 from solat_cb.utils import Logger, inrad
-from solat_cb.utils import cli
+from solat_cb.utils import cli, deconvolveQU
 from solat_cb.simulation import HILC
 
 
@@ -31,6 +31,7 @@ class SkySimulation:
         verbose: bool = True,
         fldname_suffix: str = "",
         hilc_bins: int = 10,
+        deconv_maps: bool = False,
     ):
         """
         Initializes the SkySimulation class for generating and handling sky simulations.
@@ -98,6 +99,7 @@ class SkySimulation:
         self.atm_noise = atm_noise
         self.bandpass = bandpass
         self.hilc_bins = hilc_bins
+        self.deconv_maps = deconv_maps
 
     def __set_mask_fsky__(self, libdir):
         maskobj = Mask(libdir, self.nside, self.__class__.__name__[:3], verbose=self.verbose)
@@ -134,14 +136,16 @@ class SkySimulation:
             beta = self.cmb.beta
             return os.path.join(
                 self.libdir,
-                f"obs/obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
+                f"obs/obsQU_N{self.nside}_b{str(beta).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_d' if self.deconv_maps else ''}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
             )
         elif self.cb_method == 'aniso':
             Acb = self.cmb.Acb
             return os.path.join(
                 self.libdir,
-                f"obs/obsQU_N{self.nside}_A{str(Acb).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
+                f"obs/obsQU_N{self.nside}_A{str(Acb).replace('.','p')}_a{str(alpha).replace('.','p')}_{band}{'_d' if self.deconv_maps else ''}{'_bp' if self.bandpass else ''}_{idx:03d}.fits",
             )
+        else:
+            raise ValueError("Unknown CB method")
         
 
     def saveObsQUs(self, idx: int, apply_mask: bool = True) -> None:
@@ -154,6 +158,11 @@ class SkySimulation:
             signal.append(self.obsQUwAlpha(idx, band, fwhm, alpha))
         noise = self.noise.noiseQU()
         sky = np.array(signal) + noise
+        
+        if self.deconv_maps:
+            for i in tqdm(range(len(bands)), desc='Deconvolving QUs', unit='band'):
+                sky[i] = deconvolveQU(sky[i], self.config[bands[i]]['fwhm'])
+            
         for i in tqdm(range(len(bands)), desc="Saving Observed QUs", unit="band"):
             fname = self.obsQUfname(idx, bands[i])
             hp.write_map(fname, sky[i] * mask, dtype=np.float64, overwrite=True) # type: ignore
@@ -228,6 +237,7 @@ class LATsky(SkySimulation):
         atm_noise: bool = False,
         nsplits: int = 2,
         bandpass: bool = False,
+        deconv_maps: bool = False,
         verbose: bool = True,
     ):
         super().__init__(
@@ -247,12 +257,13 @@ class LATsky(SkySimulation):
             bandpass=bandpass,
             verbose=verbose,
             fldname_suffix="",
+            deconv_maps=deconv_maps,
         )
 
 
 class SATsky(SkySimulation):
-    freqs = np.array(["30", "40", "100", "150", "220", "280"])
-    fwhm = np.array([30.0, 20.0, 10.0, 7.0, 5.0, 3.5])  # example values
+    freqs = np.array(["27", "39", "93", "145", "225", "280"])
+    fwhm = np.array([91, 63, 30, 17, 11, 9])
     tube = np.array(["S1", "S1", "S2", "S2", "S3", "S3"])  # example tube identifiers
 
     def __init__(
@@ -268,6 +279,7 @@ class SATsky(SkySimulation):
         atm_noise: bool = False,
         nsplits: int = 2,
         bandpass: bool = False,
+        deconv_maps: bool = False,
         verbose: bool = True,
     ):
         super().__init__(
@@ -287,4 +299,5 @@ class SATsky(SkySimulation):
             bandpass=bandpass,
             verbose=verbose,
             fldname_suffix="",
+            deconv_maps=deconv_maps,
         )

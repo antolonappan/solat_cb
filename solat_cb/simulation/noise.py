@@ -15,7 +15,7 @@ def NoiseSpectra(sensitivity_mode, fsky, lmax, atm_noise, telescope):
         case "SAT":
             teles = so_models.SOSatV3point1(sensitivity_mode)
     
-    teles.get_noise_curves(fsky, lmax, 1, full_covar=True, deconv_beam=False)
+    
     corr_pairs = [(0,1),(2,3),(4,5)]
     ell, N_ell_LA_T_full,N_ell_LA_P_full = teles.get_noise_curves(fsky, lmax, 1, full_covar=True, deconv_beam=False)
     del N_ell_LA_T_full
@@ -37,6 +37,7 @@ def NoiseSpectra(sensitivity_mode, fsky, lmax, atm_noise, telescope):
         WN = np.radians(teles.get_white_noise(fsky)**.5*np.sqrt(2) / 60)**2
         for i in range(Nbands):
             Nell_dict[f"{bands[i]}"] = WN[i]*np.ones_like(ell)
+
 
     return Nell_dict
 
@@ -68,9 +69,9 @@ class Noise:
         self.Nell             = NoiseSpectra(self.sensitivity_mode, fsky, self.lmax, self.atm_noise, telescope)
         self.logger           = Logger(self.__class__.__name__, verbose)
         if atm_noise:
-            self.logger.log("Noise Model: White + 1/f noise v3.0.0")
+            self.logger.log(f"Noise Model:[{telescope}] White + 1/f noise v3.1.1")
         else:
-            self.logger.log("Noise Model: White noise v3.0.0")
+            self.logger.log(f"Noise Model:[{telescope}] White noise v3.1.1")
 
     @property
     def rand_alm(self) -> np.ndarray:

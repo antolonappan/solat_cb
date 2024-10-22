@@ -4,6 +4,7 @@ import requests
 import logging
 import numpy as np
 from tqdm import tqdm
+import healpy as hp
 
 class Logger:
     def __init__(self, name: str, verbose: bool = False):
@@ -98,3 +99,25 @@ def download_file(url, filename):
             t.update(len(data))
             file.write(data)
     t.close()
+
+
+def deconvolveQU(QU,beam):
+    """
+    Deconvolves a beam from a QU map.
+
+    Parameters:
+    QU (np.ndarray): The input QU map.
+    beam (np.ndarray): The beam to deconvolve.
+
+    Returns:
+    np.ndarray: The deconvolved QU map.
+    """
+    beam = np.radians(beam/60)
+    nside = hp.npix2nside(len(QU[0]))
+    elm,blm = hp.map2alm_spin(QU,2)
+    lmax = hp.Alm.getlmax(len(elm))
+    bl = hp.gauss_beam(beam,lmax=lmax,pol=True).T
+    hp.almxfl(elm,cli(bl[1]),inplace=True)
+    hp.almxfl(blm,cli(bl[2]),inplace=True)
+    return hp.alm2map_spin([elm,blm],nside,2,lmax)
+
