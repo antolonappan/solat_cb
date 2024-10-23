@@ -285,7 +285,7 @@ class Spectra:
 
         fname = os.path.join(
             oxo_dir,
-            f"obs_x_obs_{self.bands[ii]}{'_obsBP' if self.lat.bandpass else ''}_{idx:03d}.npy",
+            f"obs_x_obs_{self.bands[ii]}{'_obsBP' if self.lat.bandpass else ''}{'_d' if self.lat.deconv_maps else ''}_{idx:03d}.npy",
         )
 
         if os.path.isfile(fname) and not recache:
@@ -349,7 +349,7 @@ class Spectra:
 
         fname = os.path.join(
             oxo_dir,
-            f"obs_x_obs_{self.bands[ii]}{'_obsBP' if self.lat.bandpass else ''}_{idx:03d}.npy",
+            f"obs_x_obs_{self.bands[ii]}{'_obsBP' if self.lat.bandpass else ''}{'_d' if self.lat.deconv_maps else ''}_{idx:03d}.npy",
         )
         if os.path.isfile(fname) and not recache:
             try:
@@ -402,6 +402,7 @@ class Spectra:
             return self.__obs_x_obs_helper_parallel__(ii, idx)
         else:
             return self.__obs_x_obs_helper_series__(ii, idx)
+
             
     def obs_x_obs(self, idx: int, progress: bool = False,) -> np.ndarray:
         """
