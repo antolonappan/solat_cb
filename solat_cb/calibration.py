@@ -35,21 +35,29 @@ def latexnames(lib, name):
 
 class Sat4Lat:
     
-    def __init__(self,libdir,latlib,satlib,lmin,lmax,sat_err,alpha_sat,alpha_lat,beta):
+    def __init__(self,libdir,satlib,lmin,lmax,sat_err,alpha_sat,beta,latlib=None,alpha_lat=None):
         self.libdir = os.path.join(libdir,'Calibration')
         os.makedirs(self.libdir,exist_ok=True)
+        self.latlib = latlib
         self.sat_err = sat_err
-        self.binner = latlib.binInfo
-        self.Lmax = latlib.lmax
-        self.__select__ = selector(latlib,lmin,lmax)
-        self.lat_mean, self.lat_std = self.calc_mean_std(latlib)
+        self.binner = satlib.binInfo
+        self.Lmax = satlib.lmax
+        self.__select__ = selector(satlib,lmin,lmax)
+        self.lat_mean, self.lat_std = self.calc_mean_std(latlib) if latlib is not None else (None,None)
         self.sat_mean, self.sat_std = self.calc_mean_std(satlib)
-        self.cl_len = CMB(libdir,latlib.lat.nside,).get_lensed_spectra(dl=False)
-        self.true =  np.concatenate([alpha_lat,alpha_sat,[beta]])
+        self.cl_len = CMB(libdir,satlib.lat.nside,).get_lensed_spectra(dl=False)
+        self.true =  np.concatenate([alpha_lat,alpha_sat,[beta]]) if latlib is not None else np.concatenate([alpha_sat,[beta]])
         self.__asat__ = alpha_sat
-        self.__alat__ = alpha_lat
-        self.__pnames__ = paranames(latlib,'LAT') + paranames(satlib,'SAT') + ['beta']
-        self.__plabels__ = latexnames(latlib,'LAT') + latexnames(satlib,'SAT') + [r'\beta']
+        self.__alat__ = alpha_lat if alpha_lat is not None else []
+        self.lmin = lmin
+        self.lmax = lmax
+
+        if alpha_lat is None:
+            self.__pnames__ = paranames(satlib,'SAT') + ['beta']
+            self.__plabels__ = latexnames(satlib,'SAT') + [r'\beta']
+        else:
+            self.__pnames__ = paranames(latlib,'LAT') + paranames(satlib,'SAT') + ['beta']
+            self.__plabels__ = latexnames(latlib,'LAT') + latexnames(satlib,'SAT') + [r'\beta']
     
     def calc_mean_std(self,lib):
         sp = get_sp(lib,self.Lmax)
@@ -62,28 +70,43 @@ class Sat4Lat:
         return np.apply_along_axis(lambda th_slice: self.binner.bin_cell(th_slice[:self.Lmax+1])[self.__select__], 0, th).T
     
     def chisq(self,theta):
-        alpha_lat,alpha_sat,beta = np.array(theta[:6]), np.array(theta[6:12]), np.ones(6)*theta[-1]
+        if self.latlib is not None:
+            alpha_sat,beta = np.array(theta[:6]), np.ones(6)*theta[-1]
+        else:
+            alpha_lat,alpha_sat,beta = np.array(theta[:6]), np.array(theta[6:12]), np.ones(6)*theta[-1]
 
-        diff_mean = self.lat_mean - self.sat_mean
-        diff_std = np.sqrt(self.lat_std**2 + self.sat_std**2)  
-        diff_model = self.theory(alpha_lat-alpha_sat)
-        diff_chi = np.sum(((diff_mean - diff_model)/diff_std)**2)
+        #diff_mean = self.lat_mean - self.sat_mean
+        #diff_std = np.sqrt(self.lat_std**2 + self.sat_std**2)  
+        #diff_model = self.theory(alpha_lat-alpha_sat)
+        #diff_chi = np.sum(((diff_mean - diff_model)/diff_std)**2)
 
         sat_model = self.theory(beta + alpha_sat)
         sat_chi = np.sum(((self.sat_mean - sat_model)/self.sat_std)**2)
 
+        if self.latlib is None:
+            return sat_chi
+        
         lat_model = self.theory(beta + alpha_lat)
         lat_chi = np.sum(((self.lat_mean - lat_model)/self.lat_std)**2)
 
-        return diff_chi + sat_chi + lat_chi
+        return  sat_chi + lat_chi #+ diff_chi
     
     def lnprior(self,theta):
-        alphalat,alphasat,beta = np.array(theta[:6]), np.array(theta[6:12]), theta[-1]
         sigma = self.sat_err
+        if self.latlib is not None:
+            alphalat,alphasat,beta = np.array(theta[:6]), np.array(theta[6:12]), theta[-1]
+        else:
+            alphasat,beta = np.array(theta[:6]), theta[-1]
         lnp = -0.5 * (alphasat - self.__asat__)**2 / sigma**2 - np.log(sigma*np.sqrt(2*np.pi))
-        if np.all(alphalat > -0.5) and np.all(alphalat < 0.5) and -0.1 < beta < 0.5:
-            return np.sum(lnp)
-        return -np.inf
+        
+        if self.latlib is not None:
+            if np.all(alphalat > -0.5) and np.all(alphalat < 0.5) and -0.1 < beta < 0.5:
+                return np.sum(lnp)
+            return -np.inf
+        else:
+            if 0 < beta < 0.5:
+                return np.sum(lnp)
+            return -np.inf
 
 
     def ln_likelihood(self,theta):
@@ -97,7 +120,10 @@ class Sat4Lat:
     
     
     def samples(self,nwalkers=32,nsamples=1000):
-        fname = os.path.join(self.libdir,f'samples_w{nwalkers}_n{nsamples}.pkl')
+        if self.latlib is None:
+            fname = os.path.join(self.libdir,f'samples_li{self.lmin}_le{self.lmax}_w{nwalkers}_n{nsamples}_sat.pkl')
+        else:
+            fname = os.path.join(self.libdir,f'samples_li{self.lmin}_le{self.lmax}_w{nwalkers}_n{nsamples}.pkl')
         if os.path.isfile(fname):
             flat_samples = pl.load(open(fname,'rb'))
         else:
@@ -107,7 +133,7 @@ class Sat4Lat:
             sample = sampler.run_mcmc(pos, nsamples, progress=True)
             flat_samples = sampler.get_chain(discard=100, thin=15, flat=True)
             pl.dump(flat_samples,open(fname,'wb'))
-        return flat_samples
+        return np.nan_to_num(flat_samples)
     
     def getdist_samples(self,nwalkers,nsamples):
         flat_samples = self.samples(nwalkers,nsamples)
