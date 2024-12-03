@@ -132,10 +132,10 @@ class Foreground:
                     raise ValueError("Bandpass profile is not initialized.")
                 nu = nu * u.GHz # type: ignore
                 maps = sky.get_emission(nu, weights)
+                maps *= pysm3.utils.bandpass_unit_conversion(nu, weights=weights, output_unit=u.uK_CMB)
             else:
                 maps = sky.get_emission(int(band) * u.GHz) # type: ignore
-
-            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz)) # type: ignore
+                maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz)) # type: ignore
 
             if mpi.rank == 0:
                 hp.write_map(fname, maps[1:], dtype=np.float64) # type: ignore
@@ -175,10 +175,10 @@ class Foreground:
                     raise ValueError("Bandpass profile is not initialized.")
                 nu = nu * u.GHz # type: ignore
                 maps = sky.get_emission(nu, weights)
+                maps *= pysm3.utils.bandpass_unit_conversion(nu, weights=weights, output_unit=u.uK_CMB)
             else:
                 maps = sky.get_emission(int(band) * u.GHz) # type: ignore
-
-            maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz)) # type: ignore
+                maps = maps.to(u.uK_CMB, equivalencies=u.cmb_equivalencies(int(band) * u.GHz)) # type: ignore
 
             if mpi.rank == 0:
                 hp.write_map(fname, maps[1:], dtype=np.float64) # type: ignore
